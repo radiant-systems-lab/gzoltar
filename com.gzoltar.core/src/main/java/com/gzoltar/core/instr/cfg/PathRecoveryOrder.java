@@ -14,34 +14,14 @@
  * You should have received a copy of the GNU Lesser General Public License along with GZoltar. If
  * not, see <https://www.gnu.org/licenses/>.
  */
-package com.gzoltar.core.instr.granularity;
+package com.gzoltar.core.instr.cfg;
 
-import javassist.CtClass;
-import javassist.bytecode.MethodInfo;
-
-public abstract class AbstractGranularity implements IGranularity {
-
-  protected CtClass ctClass;
-
-  protected MethodInfo methodInfo;
-
-  /**
-   *
-   * @param ctClass
-   * @param methodInfo
-   */
-  public AbstractGranularity(final CtClass ctClass, final MethodInfo methodInfo) {
-    this.ctClass = ctClass;
-    this.methodInfo = methodInfo;
-  }
-
-  /**
-   * Default implementation returns empty string.
-   * Subclasses can override to provide custom node suffixes.
-   */
-  @Override
-  public String getNodeSuffix() {
-    return "";
-  }
-
+/**
+ * Enumeration for different path recovery ordering strategies.
+ */
+public enum PathRecoveryOrder {
+    RANDOM,
+    INDEGREE,
+    OUTDEGREE,
+    BOTH
 }

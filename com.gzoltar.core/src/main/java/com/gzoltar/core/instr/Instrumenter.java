@@ -1,16 +1,16 @@
 /**
  * Copyright (C) 2020 GZoltar contributors.
- * 
+ *
  * This file is part of GZoltar.
- * 
+ *
  * GZoltar is free software: you can redistribute it and/or modify it under the terms of the GNU
  * Lesser General Public License as published by the Free Software Foundation, either version 3 of
  * the License, or (at your option) any later version.
- * 
+ *
  * GZoltar is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
  * the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
  * General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public License along with GZoltar. If
  * not, see <https://www.gnu.org/licenses/>.
  */
@@ -48,7 +48,7 @@ public class Instrumenter {
   private final SignatureRemover signatureRemover;
 
   /**
-   * 
+   *
    * @param agentConfigs
    */
   public Instrumenter(final AgentConfigs agentConfigs) {
@@ -63,7 +63,7 @@ public class Instrumenter {
    * Determines whether signatures should be removed from JAR files. This is typically necessary as
    * instrumentation modifies the class files and therefore invalidates existing JAR signatures.
    * Default is <code>true</code>.
-   * 
+   *
    * @param flag <code>true</code> if signatures should be removed
    */
   public void setRemoveSignatures(final boolean flag) {
@@ -71,7 +71,7 @@ public class Instrumenter {
   }
 
   /**
-   * 
+   *
    * @param classfileBuffer
    * @return
    * @throws Exception
@@ -81,7 +81,7 @@ public class Instrumenter {
   }
 
   /**
-   * 
+   *
    * @param sourceStream
    * @return
    * @throws Exception
@@ -92,7 +92,7 @@ public class Instrumenter {
   }
 
   /**
-   * 
+   *
    * @param cc
    * @return
    * @throws Exception
@@ -117,7 +117,7 @@ public class Instrumenter {
    * Creates a instrumented version of the given resource depending on its type. Class files and the
    * content of archive files (.zip, .jar) are instrumented. All other files are copied without
    * modification.
-   * 
+   *
    * @param input stream to contents from
    * @param output stream to write the instrumented version of the contents
    * @return number of instrumented classes

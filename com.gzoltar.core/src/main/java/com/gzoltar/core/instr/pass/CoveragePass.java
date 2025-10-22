@@ -1,25 +1,23 @@
 /**
  * Copyright (C) 2020 GZoltar contributors.
- * 
+ *
  * This file is part of GZoltar.
- * 
+ *
  * GZoltar is free software: you can redistribute it and/or modify it under the terms of the GNU
  * Lesser General Public License as published by the Free Software Foundation, either version 3 of
  * the License, or (at your option) any later version.
- * 
+ *
  * GZoltar is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
  * the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
  * General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public License along with GZoltar. If
  * not, see <https://www.gnu.org/licenses/>.
  */
 package com.gzoltar.core.instr.pass;
 
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
-import java.util.Queue;
 import com.gzoltar.core.AgentConfigs;
 import com.gzoltar.core.instr.InstrumentationConstants;
 import com.gzoltar.core.instr.InstrumentationLevel;
@@ -30,6 +28,9 @@ import com.gzoltar.core.instr.filter.EnumFilter;
 import com.gzoltar.core.instr.filter.IFilter;
 import com.gzoltar.core.instr.filter.SyntheticFilter;
 import com.gzoltar.core.instr.filter.Java7InterfaceFilter;
+import com.gzoltar.core.instr.granularity.GranularityFactory;
+import com.gzoltar.core.instr.granularity.GranularityLevel;
+import com.gzoltar.core.instr.granularity.IGranularity;
 import com.gzoltar.core.model.Node;
 import com.gzoltar.core.model.NodeFactory;
 import com.gzoltar.core.runtime.Collector;
@@ -45,12 +46,12 @@ import javassist.bytecode.CodeIterator;
 import javassist.bytecode.ConstPool;
 import javassist.bytecode.MethodInfo;
 import javassist.bytecode.Opcode;
-import javassist.bytecode.analysis.ControlFlow;
-import javassist.bytecode.analysis.ControlFlow.Block;
 
 public class CoveragePass implements IPass {
 
   private final InstrumentationLevel instrumentationLevel;
+
+  private final GranularityLevel granularityLevel;
 
   private final FieldPass fieldPass = new FieldPass();
 
@@ -67,6 +68,8 @@ public class CoveragePass implements IPass {
   public CoveragePass(final AgentConfigs agentConfigs) {
 
     this.instrumentationLevel = agentConfigs.getInstrumentationLevel();
+    this.granularityLevel = agentConfigs.getGranularity();
+
     switch (this.instrumentationLevel) {
       case FULL:
       default:
@@ -133,7 +136,7 @@ public class CoveragePass implements IPass {
     Collector.instance().regiterProbeGroup(this.probeGroup);
 
     if (instrumented && this.initMethodPass != null) {
-      // make GZoltar's field
+      // insert data field
       this.fieldPass.transform(ctClass);
 
       // make method to init GZoltar's field
@@ -190,20 +193,16 @@ public class CoveragePass implements IPass {
     MethodInfo methodInfo = ctBehavior.getMethodInfo();
     CodeAttribute ca = methodInfo.getCodeAttribute();
 
-    assert ca != null;
-    CodeIterator ci = ca.iterator();
-
-    Queue<Integer> blocks = new LinkedList<Integer>();
-    try {
-      ControlFlow cf = new ControlFlow(ctClass, methodInfo);
-      for (Block block : cf.basicBlocks()) {
-        blocks.add(block.position());
-      }
-    } catch (Exception e) {
-      e.printStackTrace();
+    if (ca == null) {
+      return Outcome.REJECT;
     }
 
-    int index = 0, prevLine = -1, curLine = -1, instrSize = 0;
+    // create granularity instance for this method
+    IGranularity granularity = GranularityFactory.getGranularity(ctClass, methodInfo, this.granularityLevel);
+
+    CodeIterator ci = ca.iterator();
+    int index = 0, curLine = -1, instrSize = 0;
+
     while (ci.hasNext()) {
       index = ci.next();
       curLine = methodInfo.getLineNumber(index);
@@ -212,17 +211,20 @@ public class CoveragePass implements IPass {
         continue;
       }
 
-      boolean isNewBlock = !blocks.isEmpty() && index >= instrSize + blocks.peek();
-      if (isNewBlock) {
-        blocks.poll();
-      }
+      // check if we should instrument at this index based on granularity
+      boolean shouldInstrument = granularity.instrumentAtIndex(index, instrSize);
 
-      if (prevLine != curLine || isNewBlock) {
-        // a line is always considered for instrumentation if and only if: 1) it's line number has
-        // not been instrumented; 2) or, if it's in a different block
-
-        Node node = NodeFactory.createNode(ctClass, ctBehavior, curLine, isNewBlock);
+      if (shouldInstrument) {
+        // create a node for this instrumentation point
+        Node node = NodeFactory.createNode(ctClass, ctBehavior, curLine, shouldInstrument);
         assert node != null;
+
+        // add granularity-specific suffix if needed
+        String suffix = granularity.getNodeSuffix();
+        if (!suffix.isEmpty()) {
+          node.setName(node.getName() + suffix);
+        }
+
         Probe probe = this.probeGroup.registerProbe(node, ctBehavior);
         assert probe != null;
 
@@ -234,8 +236,11 @@ public class CoveragePass implements IPass {
         } else {
           instrumented = Outcome.REJECT;
         }
+      }
 
-        prevLine = curLine;
+      // check if we should stop instrumenting (granularity-specific logic)
+      if (granularity.stopInstrumenting()) {
+        break;
       }
     }
 
