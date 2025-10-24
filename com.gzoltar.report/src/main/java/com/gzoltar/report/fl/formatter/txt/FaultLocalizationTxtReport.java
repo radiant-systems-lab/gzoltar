@@ -1,16 +1,16 @@
 /**
  * Copyright (C) 2020 GZoltar contributors.
- * 
+ *
  * This file is part of GZoltar.
- * 
+ *
  * GZoltar is free software: you can redistribute it and/or modify it under the terms of the GNU
  * Lesser General Public License as published by the Free Software Foundation, either version 3 of
  * the License, or (at your option) any later version.
- * 
+ *
  * GZoltar is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
  * the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
  * General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public License along with GZoltar. If
  * not, see <https://www.gnu.org/licenses/>.
  */
@@ -68,6 +68,11 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
 
       for (ProbeGroup probeGroup : probeGroups) {
         for (Probe probe : probeGroup.getProbes()) {
+          // Skip probes with #SKIP suffix (SELECTIVE_CFG non-selected blocks)
+          if (probe.getNode().getNameWithLineNumber().contains("#SKIP")) {
+            continue;
+          }
+
           if (transaction.isProbeActived(probeGroup, probe.getArrayIndex())) {
             transactionStr.append("1 ");
           } else {
@@ -100,7 +105,10 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
     // content
     for (ProbeGroup probeGroup : probeGroups) {
       for (Probe probe : probeGroup.getProbes()) {
-        spectraWriter.println(probe.getNode().getNameWithLineNumber());
+        // Skip probes with #SKIP suffix (SELECTIVE_CFG non-selected blocks)
+        if (!probe.getNode().getNameWithLineNumber().contains("#SKIP")) {
+          spectraWriter.println(probe.getNode().getNameWithLineNumber());
+        }
       }
     }
 
@@ -129,8 +137,11 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
       });
 
       for (Node node : nodes) {
-        formulaWriter.println(
-            node.getNameWithLineNumber() + ";" + node.getSuspiciousnessValue(formula.getName()));
+        // Skip nodes with #SKIP suffix (SELECTIVE_CFG non-selected blocks)
+        if (!node.getNameWithLineNumber().contains("#SKIP")) {
+          formulaWriter.println(
+              node.getNameWithLineNumber() + ";" + node.getSuspiciousnessValue(formula.getName()));
+        }
       }
 
       formulaWriter.close();

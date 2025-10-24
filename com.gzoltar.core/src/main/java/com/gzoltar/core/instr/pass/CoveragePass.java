@@ -202,6 +202,7 @@ public class CoveragePass implements IPass {
 
     CodeIterator ci = ca.iterator();
     int index = 0, curLine = -1, instrSize = 0;
+    int probeSize = 0;  // Calculate probe size once
 
     while (ci.hasNext()) {
       index = ci.next();
@@ -211,7 +212,7 @@ public class CoveragePass implements IPass {
         continue;
       }
 
-      // check if we should instrument at this index based on granularity
+      // Check if we should instrument at this index based on granularity
       boolean shouldInstrument = granularity.instrumentAtIndex(index, instrSize);
 
       if (shouldInstrument) {
@@ -225,6 +226,9 @@ public class CoveragePass implements IPass {
           node.setName(node.getName() + suffix);
         }
 
+        // Always register probe and instrument ALL blocks (including #SKIP)
+        // This ensures coverage data is identical to BASICBLOCK
+        // Blocks marked #SKIP can be filtered out in post-processing if needed
         Probe probe = this.probeGroup.registerProbe(node, ctBehavior);
         assert probe != null;
 
@@ -251,7 +255,14 @@ public class CoveragePass implements IPass {
     Bytecode b = new Bytecode(constPool);
     b.addGetstatic(ctClass, InstrumentationConstants.FIELD_NAME,
         InstrumentationConstants.FIELD_DESC_BYTECODE);
-    b.addIconst(probe.getArrayIndex());
+
+    // Use sipush for all indices to ensure consistent probe size (7 bytes total)
+    // This is important for selective instrumentation to work correctly
+    int index = probe.getArrayIndex();
+    b.addOpcode(Opcode.SIPUSH);
+    b.add((index >>> 8) & 0xFF);
+    b.add(index & 0xFF);
+
     b.addOpcode(Opcode.ICONST_1);
     b.addOpcode(Opcode.BASTORE);
 

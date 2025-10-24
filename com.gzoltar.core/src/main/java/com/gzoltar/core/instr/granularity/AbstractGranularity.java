@@ -44,4 +44,14 @@ public abstract class AbstractGranularity implements IGranularity {
     return "";
   }
 
+  /**
+   * Default implementation returns false (no decision points that aren't instrumented).
+   * This is correct for non-selective strategies (LINE, METHOD, BASICBLOCK).
+   * Selective strategies (SELECTIVE_CFG) should override this method.
+   */
+  @Override
+  public boolean isDecisionPoint(final int index, final int instrumentationSize) {
+    return false;
+  }
+
 }

@@ -45,8 +45,8 @@ import com.gzoltar.core.instr.cfg.PathRecoveryOrder;
  */
 public class SelectiveCFGGranularity extends AbstractGranularity {
 
-    private Queue<Integer> blocks = new LinkedList<Integer>();
-    private Set<Integer> instrumentedBlocks = new HashSet<Integer>();
+    private Queue<Integer> blocks = new LinkedList<Integer>();  // All basic blocks (same as BasicBlockGranularity)
+    private Set<Integer> selectedBlockSet = new HashSet<Integer>();  // Blocks selected by PRS algorithm
     private ControlFlowGraph cfg;
     private Map<Integer, Integer> offsetToBlockId = new HashMap<Integer, Integer>();
     private Integer lastInstrumentedOffset = null;
@@ -64,31 +64,23 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
             // Build CFG using ControlFlow-based analysis
             this.cfg = CFGBuilder.buildFromControlFlow(ctClass, methodInfo);
 
-            // Find minimal set of nodes to instrument using PRS algorithm
+            // Get ALL basic blocks using Javassist (same as BasicBlockGranularity)
+            ControlFlow cf = new ControlFlow(ctClass, methodInfo);
+            int blockId = 0;
+            for (Block block : cf.basicBlocks()) {
+                this.blocks.add(block.position());
+                this.offsetToBlockId.put(block.position(), blockId++);
+            }
+
+            // Find minimal set of nodes to keep using PRS algorithm
             // Use BOTH strategy as it typically provides the best reduction
             Set<BasicBlockNode> removableNodes = cfg.findMinimalNodes(PathRecoveryOrder.BOTH);
 
-            // Instrument all non-removable nodes
-            Set<BasicBlockNode> blocksToInstrument = new HashSet<BasicBlockNode>();
+            // Mark which blocks are selected (non-removable)
             for (BasicBlockNode node : cfg.nodes.values()) {
                 if (!removableNodes.contains(node)) {
-                    blocksToInstrument.add(node);
+                    this.selectedBlockSet.add(node.offset);
                 }
-            }
-
-            // Convert to bytecode offsets for compatibility with existing infrastructure
-            Map<Integer, BasicBlockNode> offsetToNode = new HashMap<Integer, BasicBlockNode>();
-            for (BasicBlockNode node : blocksToInstrument) {
-                offsetToNode.put(node.offset, node);
-                // Store the mapping from offset to block ID
-                this.offsetToBlockId.put(node.offset, node.id);
-            }
-            List<Integer> sortedOffsets = new ArrayList<Integer>(offsetToNode.keySet());
-            Collections.sort(sortedOffsets);
-
-            for (Integer offset : sortedOffsets) {
-                this.blocks.add(offset);
-                this.instrumentedBlocks.add(offset);
             }
 
         } catch (Exception e) {
@@ -100,6 +92,7 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
                 int blockId = 0;
                 for (Block block : cf.basicBlocks()) {
                     this.blocks.add(block.position());
+                    this.selectedBlockSet.add(block.position());  // Keep all blocks in fallback mode
                     this.offsetToBlockId.put(block.position(), blockId++);
                 }
             } catch (Exception e2) {
@@ -110,6 +103,8 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
 
     @Override
     public boolean instrumentAtIndex(final int index, final int instrumentationSize) {
+        // Instrument ALL blocks (same as BasicBlockGranularity)
+        // This ensures coverage data is consistent with BASICBLOCK
         boolean outcome = !this.blocks.isEmpty() && index >= instrumentationSize + this.blocks.peek();
         if (outcome) {
             this.lastInstrumentedOffset = this.blocks.poll();
@@ -124,11 +119,15 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
 
     @Override
     public String getNodeSuffix() {
-        if (lastInstrumentedOffset != null && offsetToBlockId.containsKey(lastInstrumentedOffset)) {
+        // Only add suffix for blocks selected by PRS algorithm
+        // Non-selected blocks will be filtered out later
+        if (lastInstrumentedOffset != null && selectedBlockSet.contains(lastInstrumentedOffset)
+            && offsetToBlockId.containsKey(lastInstrumentedOffset)) {
             int blockId = offsetToBlockId.get(lastInstrumentedOffset);
             return "#CFG" + blockId;
         }
-        return "";
+        // Return a special suffix for non-selected blocks so they can be filtered out
+        return "#SKIP";
     }
 
     /**
@@ -138,10 +137,10 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
         StringBuilder stats = new StringBuilder();
         stats.append("CFG Statistics for ").append(methodInfo.getName()).append(":\n");
         stats.append("  Total basic blocks: ").append(cfg != null ? cfg.nodes.size() : 0).append("\n");
-        stats.append("  Blocks to instrument: ").append(instrumentedBlocks.size()).append("\n");
+        stats.append("  Blocks to instrument: ").append(selectedBlockSet.size()).append("\n");
 
         if (cfg != null && cfg.nodes.size() > 0) {
-            double reduction = (1.0 - (double) instrumentedBlocks.size() / cfg.nodes.size()) * 100;
+            double reduction = (1.0 - (double) selectedBlockSet.size() / cfg.nodes.size()) * 100;
             stats.append("  Reduction: ").append(String.format("%.1f%%", reduction)).append("\n");
         }
 

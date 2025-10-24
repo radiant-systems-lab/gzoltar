@@ -40,4 +40,22 @@ public interface IGranularity {
    */
   public String getNodeSuffix();
 
+  /**
+   * Check if the current index represents a decision point for instrumentation,
+   * even if this granularity chooses not to actually instrument it.
+   * This is used to maintain consistent bytecode offsets across different granularities.
+   *
+   * For selective instrumentation strategies (like SELECTIVE_CFG), this method should
+   * return true for ALL potential instrumentation points (both instrumented and skipped),
+   * while instrumentAtIndex only returns true for points that should actually be instrumented.
+   *
+   * Default implementation returns the same value as instrumentAtIndex, which is correct
+   * for non-selective strategies (LINE, METHOD, BASICBLOCK).
+   *
+   * @param index current bytecode position
+   * @param instrumentationSize cumulative size of already inserted instrumentation
+   * @return true if this is a decision point that should be counted for offset calculation
+   */
+  public boolean isDecisionPoint(final int index, final int instrumentationSize);
+
 }
