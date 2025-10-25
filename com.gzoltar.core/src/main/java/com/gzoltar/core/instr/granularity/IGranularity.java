@@ -58,4 +58,72 @@ public interface IGranularity {
    */
   public boolean isDecisionPoint(final int index, final int instrumentationSize);
 
+  /**
+   * NEW: Gets the map of edges for edge-based granularities.
+   * The map should contain pairs of (sourceBlockId, destBlockId) as keys
+   * and the unique edge ID (probe index) as values.
+   *
+   * @return A map representing the edges of a simplified CFG, or an empty map if not applicable.
+   */
+  public java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, Integer> getEdges();
+
+  /**
+   * NEW: Gets the map of human-readable labels for edges.
+   * The key is the same as getEdges(), the value is the label string.
+   *
+   * @return A map of edge labels, or an empty map if not applicable.
+   */
+  public java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, String> getEdgeLabels();
+
+  /**
+   * NEW: Gets the complete path (list of BasicBlockNodes) for each edge.
+   * This allows expanding edge-based rankings back to individual block/line rankings.
+   *
+   * @return A map of edge paths, or an empty map if not applicable.
+   */
+  public java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, java.util.List<com.gzoltar.core.instr.cfg.BasicBlockNode>> getEdgePaths();
+
+  /**
+   * Allows granularity strategies to add custom fields to the instrumented class.
+   * For example, SelectiveCFG adds an edge lookup table field.
+   *
+   * @param ctClass The class being instrumented
+   * @throws Exception if field addition fails
+   */
+  public void addCustomFields(javassist.CtClass ctClass) throws Exception;
+
+  /**
+   * Allows granularity strategies to add custom initialization code to the class static initializer.
+   * This is called after all probes have been registered and their indices are known.
+   *
+   * @param ctClass The class being instrumented
+   * @param edgeToProbeIndex Mapping from edges to their probe array indices (for edge-based granularities)
+   * @throws Exception if initialization fails
+   */
+  public void initializeCustomFields(javassist.CtClass ctClass,
+      java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, Integer> edgeToProbeIndex) throws Exception;
+
+  /**
+   * Allows granularity strategies to generate custom instrumentation code.
+   * If this returns null, the standard probe instrumentation code will be used.
+   *
+   * @param ctClass The class being instrumented
+   * @param constPool The constant pool for bytecode generation
+   * @param context Additional context (e.g., blockId, probe, etc.) as a generic map
+   * @return Custom bytecode, or null to use default instrumentation
+   * @throws Exception if code generation fails
+   */
+  public javassist.bytecode.Bytecode generateCustomInstrumentationCode(
+      javassist.CtClass ctClass,
+      javassist.bytecode.ConstPool constPool,
+      java.util.Map<String, Object> context) throws Exception;
+
+  /**
+   * Determines if this granularity uses edge-based instrumentation (vs node-based).
+   * Edge-based granularities track transitions between blocks instead of block hits.
+   *
+   * @return true if this is an edge-based granularity
+   */
+  public boolean isEdgeBased();
+
 }

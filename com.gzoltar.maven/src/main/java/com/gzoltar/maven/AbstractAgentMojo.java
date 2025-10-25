@@ -1,16 +1,16 @@
 /**
  * Copyright (C) 2020 GZoltar contributors.
- * 
+ *
  * This file is part of GZoltar.
- * 
+ *
  * GZoltar is free software: you can redistribute it and/or modify it under the terms of the GNU
  * Lesser General Public License as published by the Free Software Foundation, either version 3 of
  * the License, or (at your option) any later version.
- * 
+ *
  * GZoltar is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
  * the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
  * General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public License along with GZoltar. If
  * not, see <https://www.gnu.org/licenses/>.
  */
@@ -29,7 +29,7 @@ import com.gzoltar.core.AgentConfigs;
 /**
  * Base class for preparing a property pointing to the GZoltar runtime agent that can be passed as a
  * VM argument to the application under test.
- * 
+ *
  * DISCLAIMER: this class has been exported from JaCoCo's maven module for convenience.
  */
 public abstract class AbstractAgentMojo extends AbstractGZoltarMojo {
@@ -76,6 +76,18 @@ public abstract class AbstractAgentMojo extends AbstractGZoltarMojo {
   @Parameter(property = "gzoltar.output", defaultValue = "FILE")
   private String output;
 
+  /**
+   * Specifies the granularity level of instrumentation. Valid options are:
+   * <ul>
+   * <li>LINE (default)</li>
+   * <li>METHOD</li>
+   * <li>BASICBLOCK</li>
+   * <li>SELECTIVE_CFG</li>
+   * </ul>
+   */
+  @Parameter(property = "gzoltar.granularity")
+  private String granularity;
+
   @Override
   public void executeMojo() throws MojoExecutionException, MojoFailureException {
     final Properties projectProperties = this.getProject().getProperties();
@@ -88,7 +100,7 @@ public abstract class AbstractAgentMojo extends AbstractGZoltarMojo {
 
   /**
    * Return a string representation of the GZoltar Java agent with all properties defined.
-   * 
+   *
    * @return
    */
   public String prepareAgentVM() {
@@ -129,6 +141,10 @@ public abstract class AbstractAgentMojo extends AbstractGZoltarMojo {
 
     if (this.output != null) {
       agentConfigs.setOutput(this.output);
+    }
+
+    if (this.granularity != null) {
+      agentConfigs.setGranularity(this.granularity);
     }
 
     return agentConfigs;

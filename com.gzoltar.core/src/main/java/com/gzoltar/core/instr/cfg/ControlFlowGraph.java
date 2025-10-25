@@ -20,6 +20,7 @@ import java.util.*;
 import java.util.Comparator;
 import java.util.Collections;
 
+
 /**
  * Represents the Control Flow Graph for a single method.
  */
@@ -28,6 +29,45 @@ public class ControlFlowGraph {
     public final Map<Integer, BasicBlockNode> nodes = new HashMap<Integer, BasicBlockNode>();
     public final Map<BasicBlockNode, Set<BasicBlockNode>> outEdges = new HashMap<BasicBlockNode, Set<BasicBlockNode>>();
     public final Map<BasicBlockNode, Set<BasicBlockNode>> inEdges = new HashMap<BasicBlockNode, Set<BasicBlockNode>>();
+
+    /**
+     * Represents an edge in the simplified/reduced CFG.
+     * Each edge connects two instrumented nodes and may represent a path
+     * through multiple removable nodes in the original CFG.
+     */
+    public static class SimplifiedEdge {
+        public final BasicBlockNode source;
+        public final BasicBlockNode destination;
+        public final List<BasicBlockNode> path;  // Complete path including source and dest
+        public final String label;               // e.g., "14->15" (line numbers)
+
+        public SimplifiedEdge(BasicBlockNode src, BasicBlockNode dst,
+                             List<BasicBlockNode> path, String label) {
+            this.source = src;
+            this.destination = dst;
+            this.path = path;
+            this.label = label;
+        }
+
+        @Override
+        public String toString() {
+            return "Edge[" + source.id + " -> " + destination.id + "]: " + label;
+        }
+    }
+
+    /**
+     * Result of PRS algorithm, containing both removable nodes and simplified edges.
+     */
+    public static class PRSResult {
+        public final Set<BasicBlockNode> removableNodes;
+        public final Map<BasicBlockNode, Set<BasicBlockNode>> simplifiedOutEdges;
+
+        public PRSResult(Set<BasicBlockNode> removableNodes,
+                        Map<BasicBlockNode, Set<BasicBlockNode>> simplifiedOutEdges) {
+            this.removableNodes = removableNodes;
+            this.simplifiedOutEdges = simplifiedOutEdges;
+        }
+    }
 
     public ControlFlowGraph(String methodName) {
         this.methodName = methodName;
@@ -53,6 +93,18 @@ public class ControlFlowGraph {
     }
 
     /**
+     * Finds minimal nodes and returns both removable nodes and simplified edges.
+     * This is more efficient than calling findMinimalNodes() and buildSimplifiedEdges() separately.
+     *
+     * @param order The ordering strategy for processing nodes
+     * @return PRSResult containing removable nodes and simplified edges
+     */
+    public PRSResult findMinimalNodesWithEdges(PathRecoveryOrder order) {
+        PRSResult result = findMinimalNodesInternal(order);
+        return result;
+    }
+
+    /**
      * Finds a set of nodes that can be removed from the graph for instrumentation purposes
      * without losing path coverage information. This is an implementation of a greedy heuristic
      * algorithm for the Path Recovery Set problem.
@@ -61,6 +113,13 @@ public class ControlFlowGraph {
      * @return A set of nodes that can be safely removed (not instrumented).
      */
     public Set<BasicBlockNode> findMinimalNodes(PathRecoveryOrder order) {
+        return findMinimalNodesInternal(order).removableNodes;
+    }
+
+    /**
+     * Internal implementation of PRS algorithm that returns both removable nodes and edges.
+     */
+    private PRSResult findMinimalNodesInternal(PathRecoveryOrder order) {
         Set<BasicBlockNode> ret = new HashSet<BasicBlockNode>();
         List<BasicBlockNode> v = new ArrayList<BasicBlockNode>();
         for (BasicBlockNode node : this.nodes.values()) {
@@ -123,15 +182,11 @@ public class ControlFlowGraph {
         for (BasicBlockNode n : v) {
             flag = false;
             tmpOutEdges.clear();  // Clear tmpOutEdges at the start of each iteration
-            // Head nodes (in-degree = 0) and tail nodes (out-degree = 0) can potentially be removed
-            // BUT: if the graph has only 1 node, we must keep it (otherwise no instrumentation at all)
+
+            // Head nodes (in-degree = 0) and tail nodes (out-degree = 0) are NOT removable
             if (!newInEdges.containsKey(n) || newInEdges.get(n).size() == 0
                     || !newOutEdges.containsKey(n) || newOutEdges.get(n).size() == 0) {
-                // Only add to removable set if there are other nodes in the graph
-                if (nodes.size() > 1) {
-                    ret.add(n);
-                }
-                continue;
+                continue;  // Skip these nodes (keep them instrumented)
             }
 
             for (BasicBlockNode src : newInEdges.get(n)) {
@@ -154,12 +209,11 @@ public class ControlFlowGraph {
                 mergeEdges(tmpOutEdges, newOutEdges, newInEdges);
             }
         }
-        return ret;
+        return new PRSResult(ret, newOutEdges);
     }
 
     /**
      * Helper method to merge temporary edges into the main edge structures.
-     * This matches the C++ mergeEdges function exactly.
      */
     private void mergeEdges(Map<BasicBlockNode, Set<BasicBlockNode>> tmpOutEdges,
                            Map<BasicBlockNode, Set<BasicBlockNode>> outEdges,
@@ -181,5 +235,61 @@ public class ControlFlowGraph {
             }
         }
         tmpOutEdges.clear();
+    }
+
+    /**
+     * Simplified version: build edges directly from PRS result without BFS.
+     * This is faster but doesn't include full path information.
+     * Use expandEdgePath() later if you need the complete path.
+     *
+     * @param prsResult The result from findMinimalNodesWithEdges()
+     * @param methodInfo The method info for line number mapping
+     * @return List of SimplifiedEdge objects with basic labels (source->destination only)
+     */
+    public List<SimplifiedEdge> buildSimplifiedEdgesSimple(PRSResult prsResult,
+                                                            javassist.bytecode.MethodInfo methodInfo) {
+        List<SimplifiedEdge> simplifiedEdges = new ArrayList<>();
+
+        // FINAL CORRECTED APPROACH: Track edges between two INSTRUMENTED nodes
+        // Key insight:
+        // 1. Both source and destination must be instrumented (non-removable)
+        // 2. We MUST use simplifiedOutEdges which includes transitive edges created by PRS
+        // 3. Transitive edges are NECESSARY when the original path goes through removable nodes
+        for (Map.Entry<BasicBlockNode, Set<BasicBlockNode>> entry : prsResult.simplifiedOutEdges.entrySet()) {
+            BasicBlockNode src = entry.getKey();
+
+            // Check if source node is instrumented (non-removable)
+            boolean srcRemovable = prsResult.removableNodes.contains(src);
+            if (srcRemovable) {
+                // Skip edges from removable source - they can't be tracked at runtime
+                continue;
+            }
+
+            for (BasicBlockNode dst : entry.getValue()) {
+                // Check if destination node is instrumented (non-removable)
+                boolean dstRemovable = prsResult.removableNodes.contains(dst);
+                if (dstRemovable) {
+                    // Skip edges to removable destination nodes
+                    continue;
+                }
+
+                // Keep this edge (both nodes instrumented)
+                // This includes both original edges and transitive edges created by PRS
+                int srcLine = methodInfo.getLineNumber(src.offset);
+                int dstLine = methodInfo.getLineNumber(dst.offset);
+
+                String label;
+                if (srcLine > 0 && dstLine > 0) {
+                    label = srcLine + "->" + dstLine;
+                } else {
+                    label = src.id + "->" + dst.id;
+                }
+
+                // Path is null - will be expanded on demand
+                simplifiedEdges.add(new SimplifiedEdge(src, dst, null, label));
+            }
+        }
+
+        return simplifiedEdges;
     }
 }

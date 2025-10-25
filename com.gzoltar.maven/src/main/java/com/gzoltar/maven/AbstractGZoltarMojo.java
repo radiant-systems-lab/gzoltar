@@ -1,16 +1,16 @@
 /**
  * Copyright (C) 2020 GZoltar contributors.
- * 
+ *
  * This file is part of GZoltar.
- * 
+ *
  * GZoltar is free software: you can redistribute it and/or modify it under the terms of the GNU
  * Lesser General Public License as published by the Free Software Foundation, either version 3 of
  * the License, or (at your option) any later version.
- * 
+ *
  * GZoltar is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
  * the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
  * General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public License along with GZoltar. If
  * not, see <https://www.gnu.org/licenses/>.
  */
@@ -25,7 +25,7 @@ import org.apache.maven.project.MavenProject;
 
 /**
  * Base class for GZoltar Mojos.
- * 
+ *
  * DISCLAIMER: this class has been exported from JaCoCo's maven module (originally called
  * <code>org.jacoco.maven.AbstractJacocoMojo</code>) for convenience.
  */
@@ -70,7 +70,7 @@ public abstract class AbstractGZoltarMojo extends AbstractMojo {
 
   /**
    * Returns the list of class files to include.
-   * 
+   *
    * @return class files to include, may contain wildcard characters
    */
   protected List<String> getIncludes() {
@@ -79,7 +79,7 @@ public abstract class AbstractGZoltarMojo extends AbstractMojo {
 
   /**
    * Returns the list of class files to exclude.
-   * 
+   *
    * @return class files to exclude, may contain wildcard characters
    */
   protected List<String> getExcludes() {
@@ -88,7 +88,7 @@ public abstract class AbstractGZoltarMojo extends AbstractMojo {
 
   /**
    * Executes Mojo.
-   * 
+   *
    * @throws MojoExecutionException if an unexpected problem occurs. Throwing this exception causes
    *         a "BUILD ERROR" message to be displayed.
    * @throws MojoFailureException if an expected problem (such as a compilation failure) occurs.

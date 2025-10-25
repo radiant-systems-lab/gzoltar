@@ -49,6 +49,14 @@ import javassist.bytecode.Opcode;
 
 public class CoveragePass implements IPass {
 
+  // ThreadLocal to track the last hit node ID for edge-based coverage
+  public static final ThreadLocal<Integer> __gz_lastHitNodeId = new ThreadLocal<>();
+
+  // Method to reset the ThreadLocal (called at test start)
+  public static void resetLastHitNode() {
+    __gz_lastHitNodeId.set(null);
+  }
+
   private final InstrumentationLevel instrumentationLevel;
 
   private final GranularityLevel granularityLevel;
@@ -122,8 +130,7 @@ public class CoveragePass implements IPass {
     this.probeGroup = new ProbeGroup(hash, ctClass);
 
     for (CtBehavior ctBehavior : ctClass.getDeclaredBehaviors()) {
-      boolean behaviorInstrumented =
-          this.transform(ctClass, ctBehavior).equals(Outcome.REJECT) ? false : true;
+      boolean behaviorInstrumented = !this.transform(ctClass, ctBehavior).equals(Outcome.REJECT);
       instrumented = instrumented || behaviorInstrumented;
 
       if (behaviorInstrumented) {
@@ -167,6 +174,29 @@ public class CoveragePass implements IPass {
         CtConstructor clinit = ctClass.makeClassInitializer();
         this.initMethodPass.transform(ctClass, clinit);
       }
+
+      // Allow granularity to add custom fields and initialization
+      // This is used by edge-based granularities (e.g., SELECTIVE_CFG) to add lookup tables
+      try {
+        // First, collect all edge-to-probe mappings from all methods
+        IGranularity sampleGranularity = GranularityFactory.getGranularity(ctClass, null, this.granularityLevel);
+
+        // Add custom fields (e.g., edge lookup table for SELECTIVE_CFG)
+        sampleGranularity.addCustomFields(ctClass);
+
+        // Initialize custom fields in <clinit> if needed
+        if (sampleGranularity.isEdgeBased()) {
+          // For edge-based granularities, we need to pass the edge-to-probe mapping
+          java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, Integer> edgeMapping =
+              this.classEdgeMappings.get(ctClass);
+          sampleGranularity.initializeCustomFields(ctClass, edgeMapping);
+        } else {
+          sampleGranularity.initializeCustomFields(ctClass, null);
+        }
+      } catch (Exception e) {
+        System.err.println("Error adding custom fields/initialization: " + e.getMessage());
+        e.printStackTrace();
+      }
     }
 
     return Outcome.ACCEPT;
@@ -200,9 +230,14 @@ public class CoveragePass implements IPass {
     // create granularity instance for this method
     IGranularity granularity = GranularityFactory.getGranularity(ctClass, methodInfo, this.granularityLevel);
 
+    // Handle edge-based granularities differently (they create probes for edges, not nodes)
+    if (granularity.isEdgeBased()) {
+      return transformEdgeBased(ctClass, ctBehavior, granularity, methodInfo, ca, injectBytecode);
+    }
+
+    // Standard node-based instrumentation
     CodeIterator ci = ca.iterator();
     int index = 0, curLine = -1, instrSize = 0;
-    int probeSize = 0;  // Calculate probe size once
 
     while (ci.hasNext()) {
       index = ci.next();
@@ -251,6 +286,131 @@ public class CoveragePass implements IPass {
     return instrumented;
   }
 
+  /**
+   * Transformer for edge-based granularities (e.g., SELECTIVE_CFG).
+   * Creates nodes for edges instead of basic blocks, and uses granularity-specific
+   * instrumentation code.
+   */
+  private Outcome transformEdgeBased(final CtClass ctClass, final CtBehavior ctBehavior,
+      IGranularity granularity, MethodInfo methodInfo, CodeAttribute ca, boolean injectBytecode) throws Exception {
+
+    Outcome instrumented = Outcome.REJECT;
+
+    // Get edge information from granularity
+    java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, String> edgeLabels = granularity.getEdgeLabels();
+
+    if (edgeLabels.isEmpty()) {
+      return Outcome.REJECT;
+    }
+
+    // Create edge-to-probe mapping
+    java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, Integer> edgeToProbeIndex =
+        new java.util.HashMap<>();
+
+    // Create one node for each edge with the edge label as the line identifier
+    for (java.util.Map.Entry<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, String> entry : edgeLabels.entrySet()) {
+      org.apache.commons.lang3.tuple.Pair<Integer, Integer> edge = entry.getKey();
+      String edgeLabel = entry.getValue();
+
+      // Create node with edge label instead of line number
+      Node node = NodeFactory.createNode(ctClass, ctBehavior, -1, true);
+      // Replace the line number part with the edge label
+      String nodeName = node.getName();
+      int lastColonIndex = nodeName.lastIndexOf(':');
+      if (lastColonIndex > 0) {
+        nodeName = nodeName.substring(0, lastColonIndex + 1) + edgeLabel;
+        node.setName(nodeName);
+      }
+
+      // Register the node and store the probe index
+      Probe probe = this.probeGroup.registerProbe(node, ctBehavior);
+      assert probe != null;
+      edgeToProbeIndex.put(edge, probe.getArrayIndex());
+    }
+
+    // Store edge mapping for later use in custom field initialization
+    storeEdgeMappingForClass(ctClass, edgeToProbeIndex);
+
+    // Get offset-to-blockId mapping from granularity (SelectiveCFG-specific)
+    java.util.Map<Integer, Integer> offsetToBlockId = new java.util.HashMap<>();
+    if (granularity instanceof com.gzoltar.core.instr.granularity.SelectiveCFGGranularity) {
+      com.gzoltar.core.instr.granularity.SelectiveCFGGranularity selectiveGranularity =
+          (com.gzoltar.core.instr.granularity.SelectiveCFGGranularity) granularity;
+      offsetToBlockId = selectiveGranularity.getOffsetToBlockIdMap();
+    }
+
+    // Now instrument the selected basic blocks with edge tracking code
+    CodeIterator ci = ca.iterator();
+    int index = 0, curLine = -1, instrSize = 0;
+    int maxLocals = ca.getMaxLocals();
+
+    while (ci.hasNext()) {
+      index = ci.next();
+      curLine = methodInfo.getLineNumber(index);
+
+      if (curLine == -1) {
+        continue;
+      }
+
+      // Check if we should instrument at this index based on granularity
+      boolean shouldInstrument = granularity.instrumentAtIndex(index, instrSize);
+
+      if (shouldInstrument && injectBytecode) {
+        // Get the block ID for the offset that was chosen for instrumentation
+        Integer blockOffset = null;
+        if (granularity instanceof com.gzoltar.core.instr.granularity.SelectiveCFGGranularity) {
+          com.gzoltar.core.instr.granularity.SelectiveCFGGranularity selectiveGranularity =
+              (com.gzoltar.core.instr.granularity.SelectiveCFGGranularity) granularity;
+          blockOffset = selectiveGranularity.getLastInstrumentedOffset();
+        }
+
+        Integer blockId = blockOffset != null ? offsetToBlockId.get(blockOffset) : null;
+
+        if (blockId != null) {
+          // Use granularity's custom instrumentation code
+          java.util.Map<String, Object> context = new java.util.HashMap<>();
+          context.put("blockId", blockId);
+          context.put("maxLocals", maxLocals);
+
+          Bytecode bc = granularity.generateCustomInstrumentationCode(
+              ctClass, methodInfo.getConstPool(), context);
+
+          if (bc != null) {
+            ci.insert(index, bc.get());
+            instrSize += bc.length();
+            instrumented = Outcome.ACCEPT;
+          }
+        }
+      }
+
+      // check if we should stop instrumenting
+      if (granularity.stopInstrumenting()) {
+        break;
+      }
+    }
+
+    return instrumented;
+  }
+
+  // Store edge mapping per class for <clinit> generation
+  private java.util.Map<CtClass, java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, Integer>>
+      classEdgeMappings = new java.util.HashMap<>();
+
+  private void storeEdgeMappingForClass(CtClass ctClass,
+      java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, Integer> edgeMapping) {
+
+    // Merge with existing mappings for this class
+    java.util.Map<org.apache.commons.lang3.tuple.Pair<Integer, Integer>, Integer> existingMapping =
+        classEdgeMappings.get(ctClass);
+
+    if (existingMapping == null) {
+      classEdgeMappings.put(ctClass, new java.util.HashMap<>(edgeMapping));
+    } else {
+      existingMapping.putAll(edgeMapping);
+    }
+  }
+
+
   private Bytecode getInstrumentationCode(CtClass ctClass, Probe probe, ConstPool constPool) {
     Bytecode b = new Bytecode(constPool);
     b.addGetstatic(ctClass, InstrumentationConstants.FIELD_NAME,
@@ -268,5 +428,6 @@ public class CoveragePass implements IPass {
 
     return b;
   }
+
 
 }

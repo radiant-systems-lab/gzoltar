@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import com.gzoltar.core.model.Node;
 import com.gzoltar.core.model.Transaction;
 import com.gzoltar.core.model.TransactionOutcome;
@@ -30,6 +31,7 @@ import com.gzoltar.core.runtime.Probe;
 import com.gzoltar.core.runtime.ProbeGroup;
 import com.gzoltar.core.spectrum.ISpectrum;
 import com.gzoltar.fl.IFormula;
+import com.gzoltar.report.fl.EdgeRankingExpander;
 import com.gzoltar.report.fl.formatter.IFaultLocalizationReportFormatter;
 
 public class FaultLocalizationTxtReport implements IFaultLocalizationReportFormatter {
@@ -68,11 +70,6 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
 
       for (ProbeGroup probeGroup : probeGroups) {
         for (Probe probe : probeGroup.getProbes()) {
-          // Skip probes with #SKIP suffix (SELECTIVE_CFG non-selected blocks)
-          if (probe.getNode().getNameWithLineNumber().contains("#SKIP")) {
-            continue;
-          }
-
           if (transaction.isProbeActived(probeGroup, probe.getArrayIndex())) {
             transactionStr.append("1 ");
           } else {
@@ -105,10 +102,7 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
     // content
     for (ProbeGroup probeGroup : probeGroups) {
       for (Probe probe : probeGroup.getProbes()) {
-        // Skip probes with #SKIP suffix (SELECTIVE_CFG non-selected blocks)
-        if (!probe.getNode().getNameWithLineNumber().contains("#SKIP")) {
-          spectraWriter.println(probe.getNode().getNameWithLineNumber());
-        }
+        spectraWriter.println(probe.getNode().getNameWithLineNumber());
       }
     }
 
@@ -136,12 +130,13 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
         }
       });
 
+      // Write nodes directly with edge labels (no expansion)
       for (Node node : nodes) {
-        // Skip nodes with #SKIP suffix (SELECTIVE_CFG non-selected blocks)
-        if (!node.getNameWithLineNumber().contains("#SKIP")) {
-          formulaWriter.println(
-              node.getNameWithLineNumber() + ";" + node.getSuspiciousnessValue(formula.getName()));
-        }
+        String nodeName = node.getNameWithLineNumber();
+        double suspiciousness = node.getSuspiciousnessValue(formula.getName());
+
+        // Write the node with its original name (including edge labels like "14->15")
+        formulaWriter.println(nodeName + ";" + suspiciousness);
       }
 
       formulaWriter.close();

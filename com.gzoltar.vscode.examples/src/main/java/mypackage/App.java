@@ -3,7 +3,7 @@ package mypackage;
 public class App {
     public int mid(int x, int y, int z) {
         int m = z;
-        if (y < z) { // should be y < z
+        if (y > z) { // should be y < z
             if (x < y)
                 m = y;
             else if (x < z)

@@ -11,7 +11,7 @@ public class AppTest {
     App faulty = new App();
     @Test
     public void test1() {
-        assertEquals(3, faulty.mid(3,2, 1));
+        assertEquals(2, faulty.mid(3,2, 1));
     }
     @Test
     public void test2(){
