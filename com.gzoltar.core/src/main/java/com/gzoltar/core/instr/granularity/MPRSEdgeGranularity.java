@@ -35,15 +35,15 @@ import javassist.bytecode.analysis.ControlFlow;
 import javassist.bytecode.analysis.ControlFlow.Block;
 
 /**
- * A selective CFG-based granularity that uses the Path Recovery Set (PRS) algorithm
+ * A m PRS Edge-based granularity that uses the Path Recovery Set (PRS) algorithm
  * to minimize the number of basic blocks that need to be instrumented while still
  * maintaining full path coverage information.
  */
-public class SelectiveCFGGranularity extends AbstractGranularity {
+public class MPRSEdgeGranularity extends AbstractGranularity {
 
-    private Queue<Integer> blocks = new LinkedList<Integer>();  // All basic blocks (same as BasicBlockGranularity)
-    private Set<Integer> selectedBlockSet = new HashSet<Integer>();  // Blocks selected by PRS algorithm
-    private ControlFlowGraph cfg;
+    protected Queue<Integer> blocks = new LinkedList<Integer>();  // All basic blocks (same as BasicBlockGranularity)
+    protected Set<Integer> selectedBlockSet = new HashSet<Integer>();  // Blocks selected by PRS algorithm
+    protected ControlFlowGraph cfg;
     private Map<Integer, Integer> offsetToBlockId = new HashMap<Integer, Integer>();
     private Integer lastInstrumentedOffset = null;
 
@@ -56,7 +56,7 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
     // Store PRS result for on-demand path expansion
     private ControlFlowGraph.PRSResult prsResult;
 
-    public SelectiveCFGGranularity(final CtClass ctClass, final MethodInfo methodInfo) {
+    public MPRSEdgeGranularity(final CtClass ctClass, final MethodInfo methodInfo) {
         super(ctClass, methodInfo);
         initializeCFG(ctClass, methodInfo);
     }
@@ -75,6 +75,10 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
         return this.offsetToBlockId;
     }
 
+    public ControlFlowGraph getCFG() {
+        return this.cfg;
+    }
+
     /**
      * Get the last instrumented offset (for edge-based instrumentation).
      */
@@ -85,7 +89,7 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
     /**
      * Initialize the CFG and determine which blocks to instrument using minimal PRS.
      */
-    private void initializeCFG(final CtClass ctClass, final MethodInfo methodInfo) {
+    protected void initializeCFG(final CtClass ctClass, final MethodInfo methodInfo) {
         // When methodInfo is null (e.g., when called from CoveragePass for class-level granularity),
         // skip CFG initialization as there's no specific method to analyze
         if (methodInfo == null) {
@@ -205,7 +209,7 @@ public class SelectiveCFGGranularity extends AbstractGranularity {
     }
 
     /**
-     * SelectiveCFG uses edge-based instrumentation.
+     * m PRS Edge uses edge-based instrumentation.
      */
     @Override
     public boolean isEdgeBased() {

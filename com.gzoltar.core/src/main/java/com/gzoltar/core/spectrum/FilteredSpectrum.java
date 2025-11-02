@@ -134,8 +134,11 @@ public class FilteredSpectrum {
         } else if (this.granularity == GranularityLevel.BASICBLOCK && probe.getNode().isStartBlock()) {
           // register BasicBlock probe
           newProbeGroup.registerProbe(probe.getNode(), probe.getCtBehavior());
-        } else if (this.granularity == GranularityLevel.SELECTIVE_CFG) {
+        } else if (this.granularity == GranularityLevel.MPRSEDGE) {
           // register Selective CFG probe
+          newProbeGroup.registerProbe(probe.getNode(), probe.getCtBehavior());
+        } else if (this.granularity == GranularityLevel.MPRSNODE) {
+          // register mPRS Node probe
           newProbeGroup.registerProbe(probe.getNode(), probe.getCtBehavior());
         }
       }
@@ -208,6 +211,7 @@ public class FilteredSpectrum {
               newNodeType = NodeType.METHOD;
               break;
             case BASICBLOCK:
+            case MPRSNODE:
             case LINE:
             default:
               break;

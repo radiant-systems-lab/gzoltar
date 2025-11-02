@@ -1,0 +1,19 @@
+digraph "mid" {
+  rankdir=LR;
+  node [shape=box,fontname=Courier];
+  n0 [label="0@0"]; 
+  n9 [label="9@49"]; 
+  n3 [label="3@19"]; 
+  n4 [label="4@24"]; 
+  n7 [label="7@41"]; 
+  n5 [label="5@30"]; 
+  n8 [label="8@46"]; 
+  n3 -> n9;
+  n3 -> n4;
+  n4 -> n9;
+  n7 -> n9;
+  n7 -> n8;
+  n5 -> n7;
+  n8 -> n9;
+  n0 -> n5;
+}

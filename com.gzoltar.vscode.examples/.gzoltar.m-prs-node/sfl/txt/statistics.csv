@@ -1,0 +1,3 @@
+formula,metric_name,metric_value
+ochiai,uniqueness,0.625
+tarantula,uniqueness,0.625

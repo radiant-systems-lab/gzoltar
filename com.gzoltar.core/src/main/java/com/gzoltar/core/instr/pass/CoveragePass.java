@@ -331,11 +331,11 @@ public class CoveragePass implements IPass {
     // Store edge mapping for later use in custom field initialization
     storeEdgeMappingForClass(ctClass, edgeToProbeIndex);
 
-    // Get offset-to-blockId mapping from granularity (SelectiveCFG-specific)
+    // Get offset-to-blockId mapping from granularity (m PRS Edge-specific)
     java.util.Map<Integer, Integer> offsetToBlockId = new java.util.HashMap<>();
-    if (granularity instanceof com.gzoltar.core.instr.granularity.SelectiveCFGGranularity) {
-      com.gzoltar.core.instr.granularity.SelectiveCFGGranularity selectiveGranularity =
-          (com.gzoltar.core.instr.granularity.SelectiveCFGGranularity) granularity;
+    if (granularity instanceof com.gzoltar.core.instr.granularity.MPRSEdgeGranularity) {
+      com.gzoltar.core.instr.granularity.MPRSEdgeGranularity selectiveGranularity =
+          (com.gzoltar.core.instr.granularity.MPRSEdgeGranularity) granularity;
       offsetToBlockId = selectiveGranularity.getOffsetToBlockIdMap();
     }
 
@@ -358,9 +358,9 @@ public class CoveragePass implements IPass {
       if (shouldInstrument && injectBytecode) {
         // Get the block ID for the offset that was chosen for instrumentation
         Integer blockOffset = null;
-        if (granularity instanceof com.gzoltar.core.instr.granularity.SelectiveCFGGranularity) {
-          com.gzoltar.core.instr.granularity.SelectiveCFGGranularity selectiveGranularity =
-              (com.gzoltar.core.instr.granularity.SelectiveCFGGranularity) granularity;
+        if (granularity instanceof com.gzoltar.core.instr.granularity.MPRSEdgeGranularity) {
+          com.gzoltar.core.instr.granularity.MPRSEdgeGranularity selectiveGranularity =
+              (com.gzoltar.core.instr.granularity.MPRSEdgeGranularity) granularity;
           blockOffset = selectiveGranularity.getLastInstrumentedOffset();
         }
 

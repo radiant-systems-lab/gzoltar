@@ -1,0 +1,9 @@
+name;suspiciousness_value
+mypackage$App#App():3#CFG0;0.9128709291752769
+mypackage$App#mid(int,int,int):5#CFG0;0.9128709291752769
+mypackage$App#mid(int,int,int):17#CFG9;0.9128709291752769
+mypackage$App#mid(int,int,int):9#CFG3;0.6324555320336759
+mypackage$App#mid(int,int,int):12#CFG5;0.5163977794943222
+mypackage$App#mid(int,int,int):10#CFG4;0.0
+mypackage$App#mid(int,int,int):14#CFG7;0.0
+mypackage$App#mid(int,int,int):15#CFG8;0.0

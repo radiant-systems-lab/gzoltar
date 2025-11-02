@@ -85,7 +85,7 @@ public interface IGranularity {
 
   /**
    * Allows granularity strategies to add custom fields to the instrumented class.
-   * For example, SelectiveCFG adds an edge lookup table field.
+   * For example, m PRS Edge adds an edge lookup table field.
    *
    * @param ctClass The class being instrumented
    * @throws Exception if field addition fails

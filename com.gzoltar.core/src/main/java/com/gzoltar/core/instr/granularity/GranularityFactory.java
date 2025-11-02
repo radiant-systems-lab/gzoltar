@@ -31,8 +31,10 @@ public class GranularityFactory {
         return new MethodGranularity(ctClass, methodInfo);
       case BASICBLOCK:
         return new BasicBlockGranularity(ctClass, methodInfo);
-      case SELECTIVE_CFG:
-        return new SelectiveCFGGranularity(ctClass, methodInfo);
+      case MPRSEDGE:
+        return new MPRSEdgeGranularity(ctClass, methodInfo);
+      case MPRSNODE:
+        return new MPRSNodeGranularity(ctClass, methodInfo);
       default:
         return new BasicBlockGranularity(ctClass, methodInfo);
     }
