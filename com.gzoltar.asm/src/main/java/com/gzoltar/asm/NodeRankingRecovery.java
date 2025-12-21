@@ -26,16 +26,20 @@ import java.util.*;
  * The recovery process:
  * 1. Read edge ranking (edge -> suspiciousness)
  * 2. Read edge annotations (edge -> removed nodes)
- * 3. For each node, compute suspiciousness as max of all edges that cover it
+ * 3. For to_node: use edge suspiciousness directly
+ * 4. For removed_node: compute union coverage from all containing edges, recalculate Ochiai
  *
  * Usage:
- *   java NodeRankingRecovery <edgeRanking.csv> <edges.csv> <nodeSpectra.csv> <output.csv>
+ *   java NodeRankingRecovery edgeRanking.csv edges.csv nodeSpectra.csv output.csv [spectra.csv matrix.txt]
+ *
+ * If spectra.csv and matrix.txt are provided, removed nodes get accurate union-based Ochiai.
+ * Otherwise, removed nodes use max edge suspiciousness (less accurate).
  */
 public class NodeRankingRecovery {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 4) {
-            System.out.println("Usage: java NodeRankingRecovery <edgeRanking.csv> <edges.csv> <nodeSpectra.csv> <output.csv>");
+            System.out.println("Usage: java NodeRankingRecovery <edgeRanking.csv> <edges.csv> <nodeSpectra.csv> <output.csv> [spectra.csv matrix.txt]");
             System.exit(1);
         }
 
@@ -43,11 +47,17 @@ public class NodeRankingRecovery {
         String edgesFile = args[1];
         String nodeSpectraFile = args[2];
         String outputFile = args[3];
+        String spectraFile = args.length > 4 ? args[4] : null;
+        String matrixFile = args.length > 5 ? args[5] : null;
 
         System.out.println("[Recovery] Edge ranking: " + edgeRankingFile);
         System.out.println("[Recovery] Edges file: " + edgesFile);
         System.out.println("[Recovery] Node spectra: " + nodeSpectraFile);
         System.out.println("[Recovery] Output: " + outputFile);
+        if (spectraFile != null) {
+            System.out.println("[Recovery] Spectra: " + spectraFile);
+            System.out.println("[Recovery] Matrix: " + matrixFile);
+        }
 
         // Step 1: Read edge ranking
         Map<String, Double> edgeRanking = readEdgeRanking(edgeRankingFile);
@@ -61,11 +71,35 @@ public class NodeRankingRecovery {
         List<String> allNodes = readNodeSpectra(nodeSpectraFile);
         System.out.println("[Recovery] Loaded " + allNodes.size() + " nodes");
 
-        // Step 4: Recover node ranking
-        Map<String, Double> nodeRanking = recoverNodeRanking(edgeRanking, edgeAnnotations, allNodes);
+        // Step 4: Read edge spectra and matrix if provided (for accurate removed node calculation)
+        List<String> edgeSpectra = null;
+        List<boolean[]> coverageMatrix = null;
+        List<Boolean> testResults = null;
+        int totalFailed = 0;
+        int totalPassed = 0;
+
+        if (spectraFile != null && matrixFile != null) {
+            edgeSpectra = readEdgeSpectra(spectraFile);
+            System.out.println("[Recovery] Loaded " + edgeSpectra.size() + " edge spectra entries");
+
+            MatrixData matrixData = readMatrix(matrixFile);
+            coverageMatrix = matrixData.coverage;
+            testResults = matrixData.results;
+            for (boolean failed : testResults) {
+                if (failed) totalFailed++;
+                else totalPassed++;
+            }
+            System.out.println("[Recovery] Loaded matrix: " + coverageMatrix.size() + " tests, " +
+                             totalFailed + " failed, " + totalPassed + " passed");
+        }
+
+        // Step 5: Recover node ranking
+        Map<String, Double> nodeRanking = recoverNodeRanking(
+            edgeRanking, edgeAnnotations, allNodes,
+            edgeSpectra, coverageMatrix, testResults, totalFailed, totalPassed);
         System.out.println("[Recovery] Recovered ranking for " + nodeRanking.size() + " nodes");
 
-        // Step 5: Write output
+        // Step 6: Write output
         writeNodeRanking(outputFile, nodeRanking);
         System.out.println("[Recovery] Saved to: " + outputFile);
     }
@@ -102,11 +136,13 @@ public class NodeRankingRecovery {
         String fromNode;
         String toNode;
         List<String> removedNodes;
+        int probeId;  // Added for matrix lookup
 
-        EdgeInfo(String fromNode, String toNode, List<String> removedNodes) {
+        EdgeInfo(String fromNode, String toNode, List<String> removedNodes, int probeId) {
             this.fromNode = fromNode;
             this.toNode = toNode;
             this.removedNodes = removedNodes;
+            this.probeId = probeId;
         }
     }
 
@@ -126,6 +162,7 @@ public class NodeRankingRecovery {
                 }
                 String[] parts = line.split(";", 5);
                 if (parts.length >= 4) {
+                    int probeId = Integer.parseInt(parts[0].trim());
                     String fromNode = parts[2].trim();
                     String toNode = parts[3].trim();
                     List<String> removedNodes = new ArrayList<>();
@@ -139,7 +176,7 @@ public class NodeRankingRecovery {
 
                     // Edge name format: fromNode->toNode
                     String edgeName = fromNode + "->" + toNode;
-                    annotations.put(edgeName, new EdgeInfo(fromNode, toNode, removedNodes));
+                    annotations.put(edgeName, new EdgeInfo(fromNode, toNode, removedNodes, probeId));
                 }
             }
         }
@@ -169,22 +206,92 @@ public class NodeRankingRecovery {
     }
 
     /**
+     * Read edge spectra from CSV.
+     * Format: name (one edge name per line, with header)
+     */
+    private static List<String> readEdgeSpectra(String filename) throws IOException {
+        List<String> edges = new ArrayList<>();
+        try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
+            String line;
+            boolean firstLine = true;
+            while ((line = br.readLine()) != null) {
+                if (firstLine) {
+                    firstLine = false;
+                    continue; // Skip header
+                }
+                if (!line.trim().isEmpty()) {
+                    edges.add(line.trim());
+                }
+            }
+        }
+        return edges;
+    }
+
+    static class MatrixData {
+        List<boolean[]> coverage;
+        List<Boolean> results;
+        MatrixData(List<boolean[]> coverage, List<Boolean> results) {
+            this.coverage = coverage;
+            this.results = results;
+        }
+    }
+
+    /**
+     * Read coverage matrix.
+     * Format: space-separated 0/1 values, last column is +/- for test result
+     */
+    private static MatrixData readMatrix(String filename) throws IOException {
+        List<boolean[]> coverage = new ArrayList<>();
+        List<Boolean> results = new ArrayList<>();
+        try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                String[] parts = line.split("\\s+");
+                boolean[] row = new boolean[parts.length - 1];
+                for (int i = 0; i < parts.length - 1; i++) {
+                    row[i] = parts[i].equals("1");
+                }
+                coverage.add(row);
+                results.add(parts[parts.length - 1].equals("+"));
+            }
+        }
+        return new MatrixData(coverage, results);
+    }
+
+    /**
      * Recover node ranking from edge ranking.
      *
-     * Algorithm:
-     * 1. For each edge, the to_node gets the edge's suspiciousness (as incoming edge)
-     * 2. Removed nodes along the edge also get the edge's suspiciousness
-     * 3. from_node gets its suspiciousness from edges where it is the to_node (not from outgoing edges)
-     * 4. Each node's final suspiciousness = max of all edges covering it
-     *
-     * Note: We don't propagate edge suspiciousness to from_node because:
-     * - from_node's coverage is determined by edges where it is the destination
-     * - Using from_node would incorrectly elevate suspiciousness of branching nodes
+     * For to_node: use edge suspiciousness directly (max of all incoming edges)
+     * For removed_node: compute union coverage from all containing edges, recalculate Ochiai
      */
     private static Map<String, Double> recoverNodeRanking(
             Map<String, Double> edgeRanking,
             Map<String, EdgeInfo> edgeAnnotations,
-            List<String> allNodes) {
+            List<String> allNodes,
+            List<String> edgeSpectra,
+            List<boolean[]> coverageMatrix,
+            List<Boolean> testResults,
+            int totalFailed,
+            int totalPassed) {
+
+        // Build edge name to spectra index map
+        Map<String, Integer> edgeToIndex = new HashMap<>();
+        if (edgeSpectra != null) {
+            for (int i = 0; i < edgeSpectra.size(); i++) {
+                edgeToIndex.put(edgeSpectra.get(i), i);
+            }
+        }
+
+        // Build removed_node -> list of edges containing it
+        Map<String, List<String>> removedNodeToEdges = new HashMap<>();
+        for (Map.Entry<String, EdgeInfo> entry : edgeAnnotations.entrySet()) {
+            String edgeName = entry.getKey();
+            for (String removedNode : entry.getValue().removedNodes) {
+                removedNodeToEdges.computeIfAbsent(removedNode, k -> new ArrayList<>()).add(edgeName);
+            }
+        }
 
         // Initialize all nodes with 0 suspiciousness
         Map<String, Double> nodeRanking = new LinkedHashMap<>();
@@ -192,25 +299,64 @@ public class NodeRankingRecovery {
             nodeRanking.put(node, 0.0);
         }
 
-        // For each edge, propagate its suspiciousness to covered nodes
+        // For each edge, propagate its suspiciousness to to_node
         for (Map.Entry<String, Double> entry : edgeRanking.entrySet()) {
             String edgeName = entry.getKey();
             double suspiciousness = entry.getValue();
 
             EdgeInfo edgeInfo = edgeAnnotations.get(edgeName);
             if (edgeInfo != null) {
-                // NOTE: Do NOT update from_node - it gets its suspiciousness from
-                // edges where it is the destination (to_node), not from outgoing edges.
-                // This prevents branching nodes from inheriting high suspiciousness
-                // from their high-suspiciousness branches.
-
-                // Update to node (skip BLOCK virtual nodes)
+                // Update to_node (skip BLOCK virtual nodes)
                 if (!edgeInfo.toNode.contains(":BLOCK")) {
                     updateNodeSuspiciousness(nodeRanking, edgeInfo.toNode, suspiciousness);
                 }
-                // Update removed nodes
-                for (String removedNode : edgeInfo.removedNodes) {
-                    updateNodeSuspiciousness(nodeRanking, removedNode, suspiciousness);
+            }
+        }
+
+        // For removed nodes: compute union coverage and recalculate Ochiai
+        if (coverageMatrix != null && edgeSpectra != null) {
+            for (Map.Entry<String, List<String>> entry : removedNodeToEdges.entrySet()) {
+                String removedNode = entry.getKey();
+                List<String> containingEdges = entry.getValue();
+
+                // Compute union coverage: a test covers the node if ANY of its edges is covered
+                int ef = 0, ep = 0, nf = 0;
+                for (int t = 0; t < coverageMatrix.size(); t++) {
+                    boolean covered = false;
+                    for (String edgeName : containingEdges) {
+                        Integer idx = edgeToIndex.get(edgeName);
+                        if (idx != null && idx < coverageMatrix.get(t).length && coverageMatrix.get(t)[idx]) {
+                            covered = true;
+                            break;
+                        }
+                    }
+                    boolean failed = testResults.get(t);
+                    if (covered && failed) ef++;
+                    else if (covered && !failed) ep++;
+                    else if (!covered && failed) nf++;
+                }
+
+                // Calculate Ochiai
+                double ochiai = 0.0;
+                if (ef > 0) {
+                    double denom = Math.sqrt((double)(ef + nf) * (ef + ep));
+                    if (denom > 0) {
+                        ochiai = ef / denom;
+                    }
+                }
+                nodeRanking.put(removedNode, ochiai);
+            }
+        } else {
+            // Fallback: use max edge suspiciousness for removed nodes
+            for (Map.Entry<String, Double> entry : edgeRanking.entrySet()) {
+                String edgeName = entry.getKey();
+                double suspiciousness = entry.getValue();
+
+                EdgeInfo edgeInfo = edgeAnnotations.get(edgeName);
+                if (edgeInfo != null) {
+                    for (String removedNode : edgeInfo.removedNodes) {
+                        updateNodeSuspiciousness(nodeRanking, removedNode, suspiciousness);
+                    }
                 }
             }
         }

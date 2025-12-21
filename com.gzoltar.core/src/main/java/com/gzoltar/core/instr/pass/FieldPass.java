@@ -38,15 +38,6 @@ public class FieldPass implements IPass {
     }
     ctClass.addField(f);
 
-    // --- NEW: Add fields for edge-based coverage ---
-    // The ThreadLocal is now managed centrally in CoveragePass to simplify reset logic
-    // CtField lastHitNodeField = CtField.make("public static transient ThreadLocal __gz_lastHitNodeId = new ThreadLocal();", ctClass);
-    // ctClass.addField(lastHitNodeField);
-
-    CtField edgeLookupTableField = CtField.make("public static int[][] __gz_edgeLookupTable;", ctClass);
-    ctClass.addField(edgeLookupTableField);
-    // --- END NEW ---
-
     return Outcome.ACCEPT;
   }
 

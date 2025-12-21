@@ -2,17 +2,6 @@
  * Copyright (C) 2020 GZoltar contributors.
  *
  * This file is part of GZoltar.
- *
- * GZoltar is free software: you can redistribute it and/or modify it under the terms of the GNU
- * Lesser General Public License as published by the Free Software Foundation, either version 3 of
- * the License, or (at your option) any later version.
- *
- * GZoltar is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
- * the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
- * General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License along with GZoltar. If
- * not, see <https://www.gnu.org/licenses/>.
  */
 package com.gzoltar.asm;
 
@@ -22,15 +11,16 @@ import java.util.*;
 import java.util.regex.*;
 
 /**
- * Main entry point for PRS-based edge ASM instrumentation.
+ * Main entry point for TRUE edge-based ASM instrumentation.
+ * This inserts actual edge basic blocks: p -> [edge_block] -> q
  *
- * Usage: java PRSEdgeASMInstrumenter <inputDir> <outputDir> [--includes=pattern]
+ * Usage: java TrueEdgeASMInstrumenter <inputDir> <outputDir> [--includes=pattern]
  */
-public class PRSEdgeASMInstrumenter {
+public class TrueEdgeASMInstrumenter {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 2) {
-            System.out.println("Usage: java PRSEdgeASMInstrumenter <inputDir> <outputDir> [--includes=pattern]");
+            System.out.println("Usage: java TrueEdgeASMInstrumenter <inputDir> <outputDir> [--includes=pattern]");
             System.exit(1);
         }
 
@@ -45,18 +35,20 @@ public class PRSEdgeASMInstrumenter {
             }
         }
 
-        System.out.println("[PRS-ASM] Starting PRS edge-based instrumentation");
-        System.out.println("[PRS-ASM] Input: " + inputDir.getAbsolutePath());
-        System.out.println("[PRS-ASM] Output: " + outputDir.getAbsolutePath());
-        System.out.println("[PRS-ASM] Include pattern: " + includePattern);
+        System.out.println("[TrueEdge-ASM] Starting TRUE edge-based instrumentation");
+        System.out.println("[TrueEdge-ASM] Input: " + inputDir.getAbsolutePath());
+        System.out.println("[TrueEdge-ASM] Output: " + outputDir.getAbsolutePath());
+        System.out.println("[TrueEdge-ASM] Include pattern: " + includePattern);
         System.out.println();
 
         TrueEdgeInstrumentor instrumentor = new TrueEdgeInstrumentor();
         Pattern pattern = Pattern.compile(includePattern);
 
-        // Find and instrument all matching classes
-        System.out.println("[PRS-ASM] Finding and instrumenting classes...");
+        // Find all class files
         List<File> classFiles = findClassFiles(inputDir);
+        List<File> matchingFiles = new ArrayList<>();
+
+        System.out.println("[TrueEdge-ASM] Instrumenting classes...");
 
         int instrumentedCount = 0;
         for (File classFile : classFiles) {
@@ -67,22 +59,20 @@ public class PRSEdgeASMInstrumenter {
             outputFile.getParentFile().mkdirs();
 
             if (pattern.matcher(className).matches()) {
-                // Instrument matching classes
                 byte[] instrumented = instrumentor.instrument(classBytes);
                 Files.write(outputFile.toPath(), instrumented);
                 instrumentedCount++;
-                System.out.println("[PRS-ASM] Instrumented: " + className);
+                System.out.println("[TrueEdge-ASM] Instrumented: " + className);
             } else {
-                // Copy non-matching classes as-is
                 Files.copy(classFile.toPath(), outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
         }
 
-        // Save edge annotations
+        // Save annotations
         System.out.println();
-        System.out.println("[PRS-ASM] Phase 3: Saving edge annotations...");
+        System.out.println("[TrueEdge-ASM] Saving edge annotations...");
 
-        // Save edges.csv (using semicolon as delimiter to avoid issues with commas in method signatures)
+        // Save edges.csv
         File edgesFile = new File(outputDir, "edges.csv");
         try (PrintWriter pw = new PrintWriter(edgesFile)) {
             pw.println("probe_id;method;from_node;to_node;removed_nodes");
@@ -94,9 +84,9 @@ public class PRSEdgeASMInstrumenter {
                     String.join("|", edge.removedNodes));
             }
         }
-        System.out.println("[PRS-ASM] Edges saved to: " + edgesFile.getAbsolutePath());
+        System.out.println("[TrueEdge-ASM] Edges saved to: " + edgesFile.getAbsolutePath());
 
-        // Save spectra.csv (edge spectra)
+        // Save spectra.csv
         File spectraFile = new File(outputDir, "spectra.csv");
         try (PrintWriter pw = new PrintWriter(spectraFile)) {
             pw.println("name");
@@ -105,7 +95,6 @@ public class PRSEdgeASMInstrumenter {
                 pw.println(edgeName);
             }
         }
-        System.out.println("[PRS-ASM] Edge spectra saved to: " + spectraFile.getAbsolutePath());
 
         // Save node_spectra.csv
         File nodeSpectraFile = new File(outputDir, "node_spectra.csv");
@@ -115,7 +104,6 @@ public class PRSEdgeASMInstrumenter {
                 pw.println(node);
             }
         }
-        System.out.println("[PRS-ASM] Node spectra saved to: " + nodeSpectraFile.getAbsolutePath());
 
         // Save probe count
         File probeCountFile = new File(outputDir, "probe_count.txt");
@@ -123,15 +111,14 @@ public class PRSEdgeASMInstrumenter {
 
         // Print summary
         System.out.println();
-        System.out.println("[PRS-ASM] ============ Summary ============");
-        System.out.println("[PRS-ASM] Classes instrumented: " + instrumentedCount);
-        System.out.println("[PRS-ASM] Total edge probes: " + instrumentor.getProbeCount());
-        System.out.println("[PRS-ASM] Total nodes: " + instrumentor.getAllNodes().size());
-        System.out.println("[PRS-ASM] =====================================");
+        System.out.println("[TrueEdge-ASM] ============ Summary ============");
+        System.out.println("[TrueEdge-ASM] Classes instrumented: " + instrumentedCount);
+        System.out.println("[TrueEdge-ASM] Total edge probes: " + instrumentor.getProbeCount());
+        System.out.println("[TrueEdge-ASM] Total nodes: " + instrumentor.getAllNodes().size());
+        System.out.println("[TrueEdge-ASM] =====================================");
 
-        // Print edges for debugging
         System.out.println();
-        System.out.println("[PRS-ASM] Probed edges:");
+        System.out.println("[TrueEdge-ASM] Probed edges:");
         for (TrueEdgeInstrumentor.EdgeRecord edge : instrumentor.getProbedEdges()) {
             System.out.println("  " + edge);
         }

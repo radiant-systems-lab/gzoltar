@@ -36,16 +36,6 @@ public enum GranularityLevel {
   /**
    *
    */
-  BASICBLOCK,
-
-  /**
-   * m PRS Edge-based instrumentation with optimization
-   */
-  MPRSEDGE,
-
-  /**
-   * m PRS Node-based instrumentation with optimization
-   */
-  MPRSNODE
+  BASICBLOCK
 
 }

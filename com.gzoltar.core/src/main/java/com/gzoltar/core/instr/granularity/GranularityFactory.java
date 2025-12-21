@@ -16,7 +16,6 @@
  */
 package com.gzoltar.core.instr.granularity;
 
-import java.util.Set;
 import javassist.CtClass;
 import javassist.bytecode.MethodInfo;
 
@@ -31,10 +30,6 @@ public class GranularityFactory {
         return new MethodGranularity(ctClass, methodInfo);
       case BASICBLOCK:
         return new BasicBlockGranularity(ctClass, methodInfo);
-      case MPRSEDGE:
-        return new MPRSEdgeGranularity(ctClass, methodInfo);
-      case MPRSNODE:
-        return new MPRSNodeGranularity(ctClass, methodInfo);
       default:
         return new BasicBlockGranularity(ctClass, methodInfo);
     }
