@@ -18,10 +18,14 @@ package com.gzoltar.core.spectrum;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import org.apache.commons.lang3.tuple.Pair;
 import org.jacoco.core.internal.data.CompactDataOutput;
+import com.gzoltar.core.model.EdgeAnnotation;
+import com.gzoltar.core.model.EdgeAnnotationRegistry;
 import com.gzoltar.core.model.Transaction;
 import com.gzoltar.core.util.SerialisationIdentifiers;
 
@@ -58,15 +62,57 @@ public class SpectrumWriter {
 
   /**
    * Serializes a spectrum instance into binary streams.
-   * 
+   *
    * @param spectrum
    * @throws IOException if the data can't be written
    */
   public void writeSpectrum(final ISpectrum spectrum) throws IOException {
+    // Write edge annotations if available (for EDGE granularity)
+    this.writeEdgeAnnotations();
+
+    // Write transactions
     for (final Transaction transaction : spectrum.getTransactions()) {
       this.writeTransaction(transaction);
     }
     this.out.close();
+  }
+
+  /**
+   * Writes edge annotations to the output stream (for EDGE granularity).
+   *
+   * @throws IOException if the data can't be written
+   */
+  private void writeEdgeAnnotations() throws IOException {
+    EdgeAnnotationRegistry registry = EdgeAnnotationRegistry.getInstance();
+    Collection<EdgeAnnotation> annotations = registry.getAllAnnotations();
+    if (annotations.isEmpty()) {
+      return;
+    }
+
+    this.out.writeByte(SerialisationIdentifiers.BLOCK_EDGE_ANNOTATION);
+    this.out.writeVarInt(annotations.size());
+
+    for (EdgeAnnotation annotation : annotations) {
+      this.out.writeVarInt(annotation.getEdgeId());
+      this.out.writeVarInt(annotation.getProbeId());
+      this.out.writeUTF(annotation.getMethodKey());
+      this.out.writeUTF(annotation.getFromNode());
+      this.out.writeUTF(annotation.getToNode());
+
+      // Write removed nodes
+      List<String> removedNodes = annotation.getRemovedNodes();
+      this.out.writeVarInt(removedNodes.size());
+      for (String node : removedNodes) {
+        this.out.writeUTF(node);
+      }
+
+      // Write covered lines
+      List<Integer> coveredLines = annotation.getCoveredLines();
+      this.out.writeVarInt(coveredLines.size());
+      for (Integer line : coveredLines) {
+        this.out.writeVarInt(line);
+      }
+    }
   }
 
   /**

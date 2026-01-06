@@ -30,6 +30,8 @@ public class GranularityFactory {
         return new MethodGranularity(ctClass, methodInfo);
       case BASICBLOCK:
         return new BasicBlockGranularity(ctClass, methodInfo);
+      case EDGE:
+        return new EdgeGranularity(ctClass, methodInfo);
       default:
         return new BasicBlockGranularity(ctClass, methodInfo);
     }

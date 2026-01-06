@@ -140,6 +140,11 @@ public class FilteredSpectrum {
         } else if (this.granularity == GranularityLevel.MPRSNODE) {
           // register mPRS Node probe
           newProbeGroup.registerProbe(probe.getNode(), probe.getCtBehavior());
+        } else if (this.granularity == GranularityLevel.EDGE) {
+          // register Edge probe (similar to BASICBLOCK but for edge-based instrumentation)
+          if (probe.getNode().isStartBlock()) {
+            newProbeGroup.registerProbe(probe.getNode(), probe.getCtBehavior());
+          }
         }
       }
 

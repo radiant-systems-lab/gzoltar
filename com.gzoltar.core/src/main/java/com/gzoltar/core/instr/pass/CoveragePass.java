@@ -28,9 +28,12 @@ import com.gzoltar.core.instr.filter.EnumFilter;
 import com.gzoltar.core.instr.filter.IFilter;
 import com.gzoltar.core.instr.filter.SyntheticFilter;
 import com.gzoltar.core.instr.filter.Java7InterfaceFilter;
+import com.gzoltar.core.instr.granularity.EdgeGranularity;
 import com.gzoltar.core.instr.granularity.GranularityFactory;
 import com.gzoltar.core.instr.granularity.GranularityLevel;
 import com.gzoltar.core.instr.granularity.IGranularity;
+import com.gzoltar.core.model.EdgeAnnotation;
+import com.gzoltar.core.model.EdgeAnnotationRegistry;
 import com.gzoltar.core.model.Node;
 import com.gzoltar.core.model.NodeFactory;
 import com.gzoltar.core.runtime.Collector;
@@ -66,7 +69,6 @@ public class CoveragePass implements IPass {
   private ProbeGroup probeGroup;
 
   public CoveragePass(final AgentConfigs agentConfigs) {
-
     this.instrumentationLevel = agentConfigs.getInstrumentationLevel();
     this.granularityLevel = agentConfigs.getGranularity();
 
@@ -232,6 +234,15 @@ public class CoveragePass implements IPass {
         Probe probe = this.probeGroup.registerProbe(node, ctBehavior);
         assert probe != null;
 
+        // For EDGE granularity, register edge annotation
+        if (this.granularityLevel == GranularityLevel.EDGE && granularity instanceof EdgeGranularity) {
+          EdgeGranularity edgeGran = (EdgeGranularity) granularity;
+          EdgeGranularity.EdgeInfo edgeInfo = edgeGran.getCurrentEdge();
+          if (edgeInfo != null) {
+            registerEdgeAnnotation(ctClass, ctBehavior, probe, edgeInfo, edgeGran);
+          }
+        }
+
         if (injectBytecode) {
           Bytecode bc = this.getInstrumentationCode(ctClass, probe, methodInfo.getConstPool());
           ci.insert(index, bc.get());
@@ -249,6 +260,61 @@ public class CoveragePass implements IPass {
     }
 
     return instrumented;
+  }
+
+  /**
+   * Register edge annotation for EDGE granularity.
+   */
+  private void registerEdgeAnnotation(CtClass ctClass, CtBehavior ctBehavior, Probe probe,
+                                      EdgeGranularity.EdgeInfo edgeInfo, EdgeGranularity edgeGran) {
+    String className = ctClass.getName().replace('.', '$');
+    String methodName = ctBehavior.getName();
+    String methodKey = className + "#" + methodName;
+
+    // Get line numbers for from and to nodes
+    int fromLine = -1;
+    if (edgeInfo.fromBlockIndex >= 0) {
+      fromLine = ctBehavior.getMethodInfo().getLineNumber(edgeInfo.fromPosition);
+    }
+    int toLine = ctBehavior.getMethodInfo().getLineNumber(edgeInfo.toPosition);
+
+    // Build node names using LINE NUMBERS (not bytecode positions)
+    String fromNode = edgeInfo.fromBlockIndex >= 0
+        ? methodKey + ":" + fromLine
+        : methodKey + ":ENTRY";
+    String toNode = methodKey + ":" + toLine;
+
+    // Collect removed node names using line numbers
+    java.util.List<String> removedNodes = new java.util.ArrayList<>();
+    for (Integer blockIdx : edgeInfo.removedBlockIndices) {
+      int pos = edgeGran.getBlocks()[blockIdx].position();
+      int line = ctBehavior.getMethodInfo().getLineNumber(pos);
+      if (line > 0) {
+        removedNodes.add(methodKey + ":" + line);
+      }
+    }
+
+    // Collect covered lines (from and to blocks, plus removed blocks)
+    java.util.List<Integer> coveredLines = new java.util.ArrayList<>();
+    if (fromLine > 0) coveredLines.add(fromLine);
+    if (toLine > 0) coveredLines.add(toLine);
+    for (Integer blockIdx : edgeInfo.removedBlockIndices) {
+      int pos = edgeGran.getBlocks()[blockIdx].position();
+      int line = ctBehavior.getMethodInfo().getLineNumber(pos);
+      if (line > 0 && !coveredLines.contains(line)) coveredLines.add(line);
+    }
+
+    EdgeAnnotation annotation = new EdgeAnnotation(
+        edgeInfo.edgeId,
+        probe.getArrayIndex(),
+        methodKey,
+        fromNode,
+        toNode,
+        removedNodes,
+        coveredLines
+    );
+
+    EdgeAnnotationRegistry.getInstance().register(annotation);
   }
 
   private Bytecode getInstrumentationCode(CtClass ctClass, Probe probe, ConstPool constPool) {
@@ -269,5 +335,13 @@ public class CoveragePass implements IPass {
     return b;
   }
 
+  /**
+   * Reset last hit node tracking for edge-based coverage.
+   * Called at the start of each test to ensure clean state.
+   */
+  public static void resetLastHitNode() {
+    // This is a no-op for now, but can be used for edge tracking state management
+    // if needed in future implementations.
+  }
 
 }

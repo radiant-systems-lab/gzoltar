@@ -33,8 +33,13 @@ import org.jacoco.core.internal.ContentTypeDetector;
 import org.jacoco.core.internal.Pack200Streams;
 import org.jacoco.core.internal.instr.SignatureRemover;
 import com.gzoltar.core.AgentConfigs;
+import com.gzoltar.core.instr.granularity.GranularityLevel;
 import com.gzoltar.core.instr.pass.IPass;
 import com.gzoltar.core.instr.pass.CoveragePass;
+import com.gzoltar.core.instr.pass.ASMEdgeInstrumentor;
+import com.gzoltar.core.runtime.Collector;
+import com.gzoltar.core.runtime.ProbeGroup;
+import com.gzoltar.core.util.MD5;
 import javassist.ClassPool;
 import javassist.CtClass;
 
@@ -47,16 +52,28 @@ public class Instrumenter {
 
   private final SignatureRemover signatureRemover;
 
+  private final GranularityLevel granularityLevel;
+
+  private final ASMEdgeInstrumentor asmEdgeInstrumentor;
+
   /**
    *
    * @param agentConfigs
    */
   public Instrumenter(final AgentConfigs agentConfigs) {
+    this.granularityLevel = agentConfigs.getGranularity();
     this.passes = new IPass[] {
         //new TestFilterPass(), // do not instrument test classes/cases
         new CoveragePass(agentConfigs)
     };
     this.signatureRemover = new SignatureRemover();
+
+    // Initialize ASM edge instrumentor for EDGE granularity
+    if (this.granularityLevel == GranularityLevel.EDGE) {
+      this.asmEdgeInstrumentor = new ASMEdgeInstrumentor();
+    } else {
+      this.asmEdgeInstrumentor = null;
+    }
   }
 
   /**
@@ -77,7 +94,51 @@ public class Instrumenter {
    * @throws Exception
    */
   public byte[] instrument(final byte[] classfileBuffer) throws Exception {
+    // For EDGE granularity, use ASM-based instrumentation
+    if (this.granularityLevel == GranularityLevel.EDGE && this.asmEdgeInstrumentor != null) {
+      return this.instrumentWithASM(classfileBuffer);
+    }
     return this.instrument(new ByteArrayInputStream(classfileBuffer));
+  }
+
+  /**
+   * Instrument using ASM for EDGE granularity.
+   * This method bypasses Javassist and uses ASM directly for precise edge probe placement.
+   */
+  private byte[] instrumentWithASM(final byte[] classfileBuffer) throws Exception {
+    // First, use Javassist to add field and init method (standard GZoltar infrastructure)
+    CtClass cc = ClassPool.getDefault().makeClass(new ByteArrayInputStream(classfileBuffer));
+
+    // Run the standard passes to add $gzoltarData field and $gzoltarInit method
+    for (IPass p : this.passes) {
+      switch (p.transform(cc)) {
+        case REJECT:
+          cc.detach();
+          return null;
+        case ACCEPT:
+        default:
+          continue;
+      }
+    }
+
+    // Get the bytecode with field and init method added
+    byte[] preparedBytecode = cc.toBytecode();
+    cc.detach();
+
+    // Now use ASM to insert edge probes
+    // Create a probe group for this class
+    String hash = MD5.calculateHash(classfileBuffer);
+    CtClass ccForProbeGroup = ClassPool.getDefault().makeClass(new ByteArrayInputStream(classfileBuffer));
+    ProbeGroup probeGroup = new ProbeGroup(hash, ccForProbeGroup);
+    ccForProbeGroup.detach();
+
+    // Instrument with ASM edge instrumentor
+    byte[] instrumentedBytecode = this.asmEdgeInstrumentor.instrument(preparedBytecode, probeGroup);
+
+    // Register the probe group
+    Collector.instance().regiterProbeGroup(probeGroup);
+
+    return instrumentedBytecode;
   }
 
   /**
@@ -87,6 +148,17 @@ public class Instrumenter {
    * @throws Exception
    */
   public byte[] instrument(final InputStream sourceStream) throws Exception {
+    // For EDGE granularity, read bytes and use ASM
+    if (this.granularityLevel == GranularityLevel.EDGE && this.asmEdgeInstrumentor != null) {
+      ByteArrayOutputStream baos = new ByteArrayOutputStream();
+      byte[] buffer = new byte[4096];
+      int len;
+      while ((len = sourceStream.read(buffer)) != -1) {
+        baos.write(buffer, 0, len);
+      }
+      return this.instrumentWithASM(baos.toByteArray());
+    }
+
     CtClass cc = ClassPool.getDefault().makeClassIfNew(sourceStream);
     return this.instrument(cc);
   }
@@ -111,6 +183,26 @@ public class Instrumenter {
 
     byte[] bytecode = cc.toBytecode();
     return bytecode;
+  }
+
+  /**
+   * Get edge records for coverage recovery (only available for EDGE granularity).
+   */
+  public java.util.List<ASMEdgeInstrumentor.EdgeRecord> getEdgeRecords() {
+    if (this.asmEdgeInstrumentor != null) {
+      return this.asmEdgeInstrumentor.getAllEdgeRecords();
+    }
+    return new java.util.ArrayList<>();
+  }
+
+  /**
+   * Get all unique node names (only available for EDGE granularity).
+   */
+  public java.util.Set<String> getAllNodes() {
+    if (this.asmEdgeInstrumentor != null) {
+      return this.asmEdgeInstrumentor.getAllNodes();
+    }
+    return new java.util.HashSet<>();
   }
 
   /**

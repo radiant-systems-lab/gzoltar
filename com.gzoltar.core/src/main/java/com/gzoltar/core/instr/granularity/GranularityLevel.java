@@ -36,6 +36,23 @@ public enum GranularityLevel {
   /**
    *
    */
-  BASICBLOCK
+  BASICBLOCK,
+
+  /**
+   * Edge-level granularity using PRS (Probe Reduction Strategy) algorithm.
+   * Instruments edges in the control flow graph instead of basic blocks.
+   * Allows recovery of node coverage from edge coverage with fewer probes.
+   */
+  EDGE,
+
+  /**
+   * mPRS Edge-level granularity (legacy, kept for compatibility).
+   */
+  MPRSEDGE,
+
+  /**
+   * mPRS Node-level granularity (legacy, kept for compatibility).
+   */
+  MPRSNODE
 
 }

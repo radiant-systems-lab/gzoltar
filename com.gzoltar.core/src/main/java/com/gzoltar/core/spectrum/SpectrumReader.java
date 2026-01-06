@@ -19,13 +19,17 @@ package com.gzoltar.core.spectrum;
 import static java.lang.String.format;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.jacoco.core.internal.data.CompactDataInput;
 import com.gzoltar.core.AgentConfigs;
 import com.gzoltar.core.instr.Instrumenter;
+import com.gzoltar.core.model.EdgeAnnotation;
+import com.gzoltar.core.model.EdgeAnnotationRegistry;
 import com.gzoltar.core.model.Transaction;
 import com.gzoltar.core.model.TransactionOutcome;
 import com.gzoltar.core.runtime.Collector;
@@ -93,11 +97,50 @@ public class SpectrumReader {
       case SerialisationIdentifiers.BLOCK_HEADER:
         this.readHeader();
         return true;
+      case SerialisationIdentifiers.BLOCK_EDGE_ANNOTATION:
+        this.readEdgeAnnotations();
+        return true;
       case SerialisationIdentifiers.BLOCK_TRANSACTION:
         this.spectrum.addTransaction(this.transactionDeserialize.deserialize());
         return true;
       default:
         throw new IOException(format("Unknown block type %x.", Byte.valueOf(blocktype)));
+    }
+  }
+
+  /**
+   * Reads edge annotations from the input stream and registers them.
+   *
+   * @throws IOException if the data can't be read
+   */
+  private void readEdgeAnnotations() throws IOException {
+    int count = this.in.readVarInt();
+    EdgeAnnotationRegistry registry = EdgeAnnotationRegistry.getInstance();
+
+    for (int i = 0; i < count; i++) {
+      int edgeId = this.in.readVarInt();
+      int probeId = this.in.readVarInt();
+      String methodKey = this.in.readUTF();
+      String fromNode = this.in.readUTF();
+      String toNode = this.in.readUTF();
+
+      // Read removed nodes
+      int removedCount = this.in.readVarInt();
+      List<String> removedNodes = new ArrayList<>(removedCount);
+      for (int j = 0; j < removedCount; j++) {
+        removedNodes.add(this.in.readUTF());
+      }
+
+      // Read covered lines
+      int linesCount = this.in.readVarInt();
+      List<Integer> coveredLines = new ArrayList<>(linesCount);
+      for (int j = 0; j < linesCount; j++) {
+        coveredLines.add(this.in.readVarInt());
+      }
+
+      EdgeAnnotation annotation = new EdgeAnnotation(
+          edgeId, probeId, methodKey, fromNode, toNode, removedNodes, coveredLines);
+      registry.register(annotation);
     }
   }
 

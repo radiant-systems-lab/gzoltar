@@ -35,4 +35,7 @@ public final class SerialisationIdentifiers {
   /** Block identifier for transaction information. */
   public static final byte BLOCK_TRANSACTION = 0x10;
 
+  /** Block identifier for edge annotation information (EDGE granularity). */
+  public static final byte BLOCK_EDGE_ANNOTATION = 0x20;
+
 }
