@@ -194,14 +194,10 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
 
   /**
    * Generate node-level ranking from edge coverage matrix.
-   * This method recovers node coverage from edge coverage and recalculates Ochiai.
    *
-   * Uses EdgeAnnotationRegistry to get edge metadata (coveredLines, removedNodes)
-   * for accurate node coverage recovery.
-   *
-   * For edge A->B:
-   *   - All lines in coveredLines are covered
-   *   - All removedNodes are covered
+   * Since the EDGE coverage matrix is identical to BASICBLOCK coverage matrix
+   * (each edge probe corresponds to exactly one basic block), we simply strip
+   * the edge label from each probe name to get the node name.
    *
    * @param outputDirectory The output directory
    * @param formulaName Name of the formula (e.g., "ochiai")
@@ -211,18 +207,9 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
   private void generateNodeRankingFromCoverage(File outputDirectory, String formulaName,
       List<ProbeGroup> probeGroups, List<Transaction> transactions) {
     try {
-      // Try to use EdgeAnnotationRegistry for accurate recovery
-      com.gzoltar.core.model.EdgeAnnotationRegistry registry =
-          com.gzoltar.core.model.EdgeAnnotationRegistry.getInstance();
-
-      if (registry.size() > 0) {
-        // Use NodeCoverageRecovery for accurate recovery
-        generateNodeRankingWithRegistry(outputDirectory, formulaName, probeGroups, transactions, registry);
-      } else {
-        // Fallback to simple edge pattern matching
-        generateNodeRankingSimple(outputDirectory, formulaName, probeGroups, transactions);
-      }
-
+      // Use simple edge pattern matching - strip #EDGE:... from probe names
+      // This works because EDGE and BASICBLOCK have identical coverage matrices
+      generateNodeRankingSimple(outputDirectory, formulaName, probeGroups, transactions);
     } catch (IOException e) {
       System.err.println("Warning: Failed to generate node ranking from edges: " + e.getMessage());
     }
@@ -355,14 +342,23 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
   }
 
   /**
-   * Fallback: generate node ranking using simple edge pattern matching.
+   * Fallback: generate node ranking by simply stripping edge labels from edge names.
+   *
+   * Since the EDGE coverage matrix is identical to BASICBLOCK coverage matrix
+   * (each edge probe corresponds to exactly one basic block), the node ranking
+   * is the same as edge ranking with just the edge label removed.
+   *
+   * Edge format: "mypackage$App#mid(int,int,int):8#EDGE:7->8"
+   * Node format: "mypackage$App#mid(int,int,int):8"
    */
   private void generateNodeRankingSimple(File outputDirectory, String formulaName,
       List<ProbeGroup> probeGroups, List<Transaction> transactions) throws IOException {
-    // Pattern to extract edge info: method:line#EDGE:from->to
-    Pattern edgePattern = Pattern.compile("^(.+):([0-9]+)#EDGE:([A-Z0-9]+)->([0-9]+)$");
+    // Pattern to extract node name from edge: everything before #EDGE:
+    Pattern edgePattern = Pattern.compile("^(.+)#EDGE:.+$");
 
-    Map<Integer, List<String>> probeToNodes = new HashMap<>();
+    // Just recalculate using the node names directly from the edge probes
+    // Each edge maps to exactly one node (the target line)
+    Map<Integer, String> probeToNode = new HashMap<>();
     Set<String> allNodeNames = new HashSet<>();
 
     int probeIndex = 0;
@@ -371,23 +367,19 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
         String edgeName = probe.getNode().getNameWithLineNumber();
         Matcher matcher = edgePattern.matcher(edgeName);
 
-        List<String> coveredNodes = new ArrayList<>();
         if (matcher.find()) {
-          String methodPrefix = matcher.group(1);
-          String targetLine = matcher.group(2);
-
-          String targetNode = methodPrefix + ":" + targetLine;
-          coveredNodes.add(targetNode);
-          allNodeNames.add(targetNode);
+          String nodeName = matcher.group(1);
+          probeToNode.put(probeIndex, nodeName);
+          allNodeNames.add(nodeName);
         }
-        probeToNodes.put(probeIndex, coveredNodes);
         probeIndex++;
       }
     }
 
+    // Calculate coverage counts for each node
     Map<String, int[]> nodeCoverage = new HashMap<>();
     for (String node : allNodeNames) {
-      nodeCoverage.put(node, new int[4]);
+      nodeCoverage.put(node, new int[4]);  // ef, ep, nf, np
     }
 
     int totalFailed = 0;
@@ -405,9 +397,9 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
       for (ProbeGroup probeGroup : probeGroups) {
         for (Probe probe : probeGroup.getProbes()) {
           if (transaction.isProbeActived(probeGroup, probe.getArrayIndex())) {
-            List<String> nodes = probeToNodes.get(probeIndex);
-            if (nodes != null) {
-              coveredNodesInTest.addAll(nodes);
+            String node = probeToNode.get(probeIndex);
+            if (node != null) {
+              coveredNodesInTest.add(node);
             }
           }
           probeIndex++;
@@ -419,17 +411,18 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
         boolean covered = coveredNodesInTest.contains(node);
 
         if (covered && testFailed) {
-          counts[0]++;
+          counts[0]++;  // ef
         } else if (covered && !testFailed) {
-          counts[1]++;
+          counts[1]++;  // ep
         } else if (!covered && testFailed) {
-          counts[2]++;
+          counts[2]++;  // nf
         } else {
-          counts[3]++;
+          counts[3]++;  // np
         }
       }
     }
 
+    // Calculate Ochiai suspiciousness for each node
     Map<String, Double> nodeRanking = new LinkedHashMap<>();
     for (String node : allNodeNames) {
       int[] counts = nodeCoverage.get(node);
@@ -446,6 +439,7 @@ public class FaultLocalizationTxtReport implements IFaultLocalizationReportForma
       nodeRanking.put(node, ochiai);
     }
 
+    // Sort by suspiciousness (descending), then by name (ascending)
     List<Map.Entry<String, Double>> sortedEntries = new ArrayList<>(nodeRanking.entrySet());
     Collections.sort(sortedEntries, new Comparator<Map.Entry<String, Double>>() {
       @Override

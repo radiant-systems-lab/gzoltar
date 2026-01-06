@@ -39,14 +39,28 @@ public class SpectrumWriter {
   /**
    * Creates a new writer based on the given output stream. Depending on the nature of the
    * underlying stream output should be buffered as most data is written in single bytes.
-   * 
+   *
    * @param output binary stream to write execution data to
    * @throws IOException if the header can't be written
    */
   public SpectrumWriter(final OutputStream output)
       throws IOException {
+    this(output, true);
+  }
+
+  /**
+   * Creates a new writer based on the given output stream with optional header writing.
+   *
+   * @param output binary stream to write execution data to
+   * @param writeHeader whether to write the header
+   * @throws IOException if the header can't be written
+   */
+  public SpectrumWriter(final OutputStream output, boolean writeHeader)
+      throws IOException {
     this.out = new CompactDataOutput(output);
-    this.writeHeader();
+    if (writeHeader) {
+      this.writeHeader();
+    }
   }
 
   /**
@@ -67,13 +81,25 @@ public class SpectrumWriter {
    * @throws IOException if the data can't be written
    */
   public void writeSpectrum(final ISpectrum spectrum) throws IOException {
-    // Write edge annotations if available (for EDGE granularity)
-    this.writeEdgeAnnotations();
-
-    // Write transactions
+    // Write transactions first
     for (final Transaction transaction : spectrum.getTransactions()) {
       this.writeTransaction(transaction);
     }
+
+    // Write edge annotations at the end (for EDGE granularity)
+    this.writeEdgeAnnotations();
+
+    this.out.close();
+  }
+
+  /**
+   * Writes edge annotations to the output stream and closes it.
+   * Used at the end of a test session to persist edge metadata.
+   *
+   * @throws IOException if the data can't be written
+   */
+  public void writeEdgeAnnotationsAndClose() throws IOException {
+    writeEdgeAnnotations();
     this.out.close();
   }
 

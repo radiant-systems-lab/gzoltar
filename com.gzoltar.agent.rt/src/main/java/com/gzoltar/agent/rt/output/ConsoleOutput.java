@@ -37,4 +37,12 @@ public class ConsoleOutput implements IAgentOutput {
   public void writeTransaction(final Transaction transaction) throws IOException {
     System.out.println(transaction.toString());
   }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public void writeEdgeAnnotations() throws IOException {
+    // Edge annotations are not relevant for console output
+  }
 }

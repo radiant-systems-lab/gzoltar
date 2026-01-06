@@ -37,4 +37,12 @@ public class NoneOutput implements IAgentOutput {
   public void writeTransaction(final Transaction transaction) throws IOException {
     // NO-OP
   }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public void writeEdgeAnnotations() throws IOException {
+    // NO-OP
+  }
 }

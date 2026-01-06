@@ -32,9 +32,17 @@ public interface IAgentOutput {
 
   /**
    * Write a transaction instance to a location determined by the agent controller.
-   * 
+   *
    * @param transaction a {@link com.gzoltar.core.model.Transaction} object
    * @throws IOException in case writing fails
    */
   public void writeTransaction(final Transaction transaction) throws IOException;
+
+  /**
+   * Write edge annotations at the end of the test session.
+   * This is called when all tests have completed to persist edge metadata for EDGE granularity.
+   *
+   * @throws IOException in case writing fails
+   */
+  public void writeEdgeAnnotations() throws IOException;
 }

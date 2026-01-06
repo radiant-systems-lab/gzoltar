@@ -53,6 +53,11 @@ public class OutputEventListener implements IEventListener {
    */
   @Override
   public void endSession() {
-    // NO-OP
+    try {
+      // Write edge annotations at the end of the session
+      this.output.writeEdgeAnnotations();
+    } catch (final Exception e) {
+      e.printStackTrace();
+    }
   }
 }

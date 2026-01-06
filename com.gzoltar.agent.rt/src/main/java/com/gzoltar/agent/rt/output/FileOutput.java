@@ -71,6 +71,21 @@ public class FileOutput implements IAgentOutput {
     }
   }
 
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public void writeEdgeAnnotations() throws IOException {
+    final OutputStream output = this.openFile();
+    try {
+      // Don't write header - we're appending to existing file
+      final SpectrumWriter writer = new SpectrumWriter(output, false);
+      writer.writeEdgeAnnotationsAndClose();
+    } finally {
+      // SpectrumWriter.writeEdgeAnnotationsAndClose() already closes the stream
+    }
+  }
+
   private OutputStream openFile() throws IOException {
     final FileOutputStream file = new FileOutputStream(this.destFile, true);
     // Avoid concurrent writes from different agents running in parallel:
