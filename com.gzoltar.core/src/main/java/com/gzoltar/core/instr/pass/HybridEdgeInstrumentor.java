@@ -56,6 +56,9 @@ import com.gzoltar.core.runtime.Probe;
  */
 public class HybridEdgeInstrumentor {
 
+  /** Debug flag - enable with -Dgzoltar.edge.debug=true */
+  private static final boolean DEBUG = Boolean.getBoolean("gzoltar.edge.debug");
+
   /** Hash for this class (set by Instrumenter) */
   private String currentClassHash;
 
@@ -70,12 +73,18 @@ public class HybridEdgeInstrumentor {
   private static long totalInstrTime = 0;
   private static int totalClassCount = 0;
   private static int verifyErrorCount = 0;
+  private static int skippedInterfaceCount = 0;
+  private static int skippedNoEdgesCount = 0;
+  private static int skippedAsmErrorCount = 0;
 
   /** Reset timing stats (call before benchmark run) */
   public static synchronized void resetTimingStats() {
     totalInstrTime = 0;
     totalClassCount = 0;
     verifyErrorCount = 0;
+    skippedInterfaceCount = 0;
+    skippedNoEdgesCount = 0;
+    skippedAsmErrorCount = 0;
   }
 
   /** Get verify error count */
@@ -95,7 +104,74 @@ public class HybridEdgeInstrumentor {
 
   /** Print timing summary (call after all tests complete) */
   public static synchronized void printTimingSummary() {
-    System.out.println("[EDGE-TIMING] Total instrumentation time: " + totalInstrTime + "ms for " + totalClassCount + " classes (VerifyErrors: " + verifyErrorCount + ")");
+    System.out.println("[EDGE-TIMING] Total instrumentation time: " + totalInstrTime + "ms for " + totalClassCount + " classes");
+    printSkipStats();
+  }
+
+  /** Print skip statistics only (call from Agent.shutdown) */
+  public static synchronized void printSkipStats() {
+    System.out.println("[EDGE-SKIP] Skipped: interfaces=" + skippedInterfaceCount +
+        ", noEdges=" + skippedNoEdgesCount +
+        ", asmError=" + skippedAsmErrorCount +
+        ", verifyError=" + verifyErrorCount);
+  }
+
+  /** Statistics for optimization tracking */
+  private static int methodsWithAload = 0;
+  private static int methodsWithGetstatic = 0;
+  private static int totalMethods = 0;
+  private static int dstEntryInsertions = 0;
+  private static int inlineInversionInsertions = 0;
+  private static int trampolineInsertions = 0;
+  private static int fallThroughInsertions = 0;
+  private static int beforeGotoInsertions = 0;
+  private static int entryInsertions = 0;
+  private static int totalEdgeCount = 0;
+  private static int totalBlockCount = 0;
+  private static int totalRemovableCount = 0;
+
+  /** Print optimization statistics */
+  public static synchronized void printOptimizationStats() {
+    if (totalMethods > 0) {
+      System.out.println("[EDGE-OPT] Methods with ALOAD: " + methodsWithAload + " (" + (100 * methodsWithAload / totalMethods) + "%)");
+      System.out.println("[EDGE-OPT] Methods with GETSTATIC: " + methodsWithGetstatic + " (" + (100 * methodsWithGetstatic / totalMethods) + "%)");
+    }
+    if (totalBlockCount > 0) {
+      System.out.println("[PRS-STATS] Total blocks: " + totalBlockCount + ", Removable: " + totalRemovableCount + " (" + (100 * totalRemovableCount / totalBlockCount) + "%), Edges: " + totalEdgeCount);
+    }
+    System.out.println("[CF-STATS] Edge insertion breakdown:");
+    System.out.println("  - dst-entry (no CF change): " + dstEntryInsertions + " (" + (totalEdgeCount > 0 ? 100 * dstEntryInsertions / totalEdgeCount : 0) + "%)");
+    System.out.println("  - inline-inversion: " + inlineInversionInsertions + " (" + (totalEdgeCount > 0 ? 100 * inlineInversionInsertions / totalEdgeCount : 0) + "%)");
+    System.out.println("  - trampoline (method-end): " + trampolineInsertions + " (" + (totalEdgeCount > 0 ? 100 * trampolineInsertions / totalEdgeCount : 0) + "%)");
+    System.out.println("  - fall-through: " + fallThroughInsertions + " (" + (totalEdgeCount > 0 ? 100 * fallThroughInsertions / totalEdgeCount : 0) + "%)");
+    System.out.println("  - before GOTO: " + beforeGotoInsertions + " (" + (totalEdgeCount > 0 ? 100 * beforeGotoInsertions / totalEdgeCount : 0) + "%)");
+    System.out.println("  - ENTRY: " + entryInsertions + " (" + (totalEdgeCount > 0 ? 100 * entryInsertions / totalEdgeCount : 0) + "%)");
+  }
+
+  /** Update method stats */
+  public static synchronized void updateMethodStats(boolean hasAload, boolean hasGetstatic) {
+    totalMethods++;
+    if (hasAload) methodsWithAload++;
+    if (hasGetstatic) methodsWithGetstatic++;
+  }
+
+  /** Update PRS stats */
+  public static synchronized void updatePRSStats(int blocks, int removable, int edges) {
+    totalBlockCount += blocks;
+    totalRemovableCount += removable;
+    totalEdgeCount += edges;
+  }
+
+  /** Update insertion stats */
+  public static synchronized void updateInsertionStats(String type) {
+    switch (type) {
+      case "dst-entry": dstEntryInsertions++; break;
+      case "inline-inversion": inlineInversionInsertions++; break;
+      case "trampoline": trampolineInsertions++; break;
+      case "fall-through": fallThroughInsertions++; break;
+      case "before-goto": beforeGotoInsertions++; break;
+      case "ENTRY": entryInsertions++; break;
+    }
   }
 
   /**
@@ -244,6 +320,7 @@ public class HybridEdgeInstrumentor {
 
     // Skip interfaces - they have no executable code to instrument
     if (ctClass.isInterface()) {
+      synchronized (HybridEdgeInstrumentor.class) { skippedInterfaceCount++; }
       return classBytes;
     }
 
@@ -266,6 +343,12 @@ public class HybridEdgeInstrumentor {
 
       // Skip static initializer and our own init method
       if (internalMethodName.equals("<clinit>") || internalMethodName.equals(InstrumentationConstants.INIT_METHOD_NAME)) {
+        continue;
+      }
+
+      // Also skip if behavior.getName() returns <clinit> (for inner classes)
+      String behaviorName = behavior.getName();
+      if (behaviorName.equals("<clinit>")) {
         continue;
       }
 
@@ -351,10 +434,6 @@ public class HybridEdgeInstrumentor {
       String methodKey = className + "#" + methodName +
                         "(" + getParamTypes(method.desc) + ")";
 
-      if (className.endsWith("StringUtils")) {
-          System.out.println("[EDGE-DEBUG-ASM] Looking for " + methodKey);
-      }
-
       List<EdgeInfo> edges = methodEdges.get(methodKey);
       if (edges != null && !edges.isEmpty()) {
         List<EdgeAnnotation> methodAnnotations = instrumentMethodWithASM(classInternalName, method, edges, probeGroup, edgeIdCounter);
@@ -370,6 +449,7 @@ public class HybridEdgeInstrumentor {
     // If no probes were added, return original bytecode to avoid COMPUTE_FRAMES corruption
     // This is important for classes with complex bytecode (like large array initializers)
     if (probeCount == 0 || !instrumented) {
+      synchronized (HybridEdgeInstrumentor.class) { skippedNoEdgesCount++; }
       // Detach from ClassPool to avoid interference with other classes
       try {
         ctClass.detach();
@@ -404,12 +484,14 @@ public class HybridEdgeInstrumentor {
       classNode.accept(cw);
     } catch (NegativeArraySizeException e) {
       // ASM's COMPUTE_FRAMES fails on some complex bytecode patterns.
+      synchronized (HybridEdgeInstrumentor.class) { skippedAsmErrorCount++; }
       while (probeGroup.getProbes().size() > probeCountBefore) {
         probeGroup.getProbes().remove(probeGroup.getProbes().size() - 1);
       }
       return classBytes;
     } catch (Exception e) {
       // Any other ASM error - clear probes and return original bytecode
+      synchronized (HybridEdgeInstrumentor.class) { skippedAsmErrorCount++; }
       while (probeGroup.getProbes().size() > probeCountBefore) {
         probeGroup.getProbes().remove(probeGroup.getProbes().size() - 1);
       }
@@ -491,6 +573,28 @@ public class HybridEdgeInstrumentor {
     PRSAlgorithm.PRSResult prsResult = PRSAlgorithm.findRemovableBlocks(prsBlocks);
     Set<Integer> removableBlocks = prsResult.removableBlocks;
     Map<PRSAlgorithm.EdgeKey, List<Integer>> edgeAnnotations = prsResult.edgeAnnotations;
+
+    // Calculate PRS edge count (only from non-removable sources to non-removable targets)
+    int prsEdgeCount = 0;
+    for (int srcId = 0; srcId < blocks.length; srcId++) {
+      if (!removableBlocks.contains(srcId)) {
+        Set<Integer> succs = prsResult.simplifiedOutEdges.get(srcId);
+        if (succs != null) {
+          for (int dst : succs) {
+            if (!removableBlocks.contains(dst)) {
+              prsEdgeCount++;
+            }
+          }
+        }
+      }
+    }
+
+    // Debug: log PRS statistics
+    if (DEBUG && blocks.length > 2) {
+      System.err.println("[PRS-DEBUG] " + methodKey + ": blocks=" + blocks.length +
+                         ", removable=" + removableBlocks.size() +
+                         ", prsEdges=" + prsEdgeCount);
+    }
 
     // ==================== 计算每个 block 的 end position ====================
     // 按 position 排序，计算每个 block 的结束位置（下一个 block 的开始）
@@ -650,6 +754,12 @@ public class HybridEdgeInstrumentor {
       ));
     }
 
+    // Debug: compare PRS edge count with actual generated edges
+    if (DEBUG && edgeInfoList.size() != prsEdgeCount) {
+      System.err.println("[PRS-MISMATCH] " + methodKey + ": prsEdges=" + prsEdgeCount +
+                         ", actualEdges=" + edgeInfoList.size());
+    }
+
     return edgeInfoList;
   }
 
@@ -765,8 +875,6 @@ public class HybridEdgeInstrumentor {
     // 如果找不到 srcLabel，退回到基于行号的方式
     if (srcLabel == null) {
       int srcLine = extractLineNumber(edge.fromNode);
-      int dstLine = extractLineNumber(edge.toNode);
-      System.err.println("[EDGE-DEBUG] probe" + probeId + " (" + srcLine + "->" + dstLine + "): srcLabel=null, falling back to line-based");
       if (srcLine > 0) {
         insertEdgeProbeByLine(classInternalName, insns, edge, probeId);
       }
@@ -837,37 +945,27 @@ public class HybridEdgeInstrumentor {
       searchCount++;
     }
 
-    // Debug output
-    int srcLine = extractLineNumber(edge.fromNode);
-    int dstLine = extractLineNumber(edge.toNode);
-    String debugPrefix = "[EDGE-DEBUG] probe" + probeId + " (" + srcLine + "->" + dstLine + "): ";
-
     // 根据找到的情况插入 probe
     if (jumpToDst != null) {
       // CASE 1: 有显式跳转到 dst
       int opcode = jumpToDst.getOpcode();
       if (opcode == Opcodes.GOTO) {
         // GOTO - 插在 GOTO 前
-        System.err.println(debugPrefix + "CASE1-GOTO, insert before GOTO");
         insns.insertBefore(jumpToDst, createProbeCode(classInternalName, probeId));
       } else {
         // 条件跳转 - 使用就地反转 trampoline
-        System.err.println(debugPrefix + "CASE1-COND, use local trampoline");
         instrumentConditionalTakenEdge(insns, jumpToDst, createProbeCode(classInternalName, probeId));
       }
     } else if (conditionalAway != null) {
       // CASE 2: 有条件跳转到其他地方，fall-through 到 dst
       // 插在条件跳转后面
-      System.err.println(debugPrefix + "CASE2-FALLTHRU, insert after conditional");
       insns.insert(conditionalAway, createProbeCode(classInternalName, probeId));
     } else if (lastExecInBlock != null) {
       // CASE 3: 纯 fall-through，无跳转
       // 插在 block 最后一条指令后
-      System.err.println(debugPrefix + "CASE3-PURE, insert after lastExec, srcLabel=" + (srcLabel != null) + ", dstLabel=" + (dstLabel != null));
       insns.insert(lastExecInBlock, createProbeCode(classInternalName, probeId));
-    } else {
-      System.err.println(debugPrefix + "NO-INSERT (srcLabel=" + (srcLabel != null) + ", dstLabel=" + (dstLabel != null) + ")");
     }
+    // If none of the above, no probe is inserted (edge cannot be instrumented)
   }
 
   /**
@@ -962,13 +1060,16 @@ public class HybridEdgeInstrumentor {
       searchCount++;
     }
 
-    // Debug
-    int srcLine = extractLineNumber(firstEdge.fromNode);
-    String debugPrefix = "[EDGE-MULTI] srcLine=" + srcLine + " edges=" + blockEdges.size() + ": ";
+    // Debug (only compute when DEBUG enabled to avoid string allocation overhead)
+    String debugPrefix = null;
+    if (DEBUG) {
+      int srcLine = extractLineNumber(firstEdge.fromNode);
+      debugPrefix = "[EDGE-MULTI] srcLine=" + srcLine + " edges=" + blockEdges.size() + ": ";
+    }
 
     if (conditionalJump == null) {
       // 没找到条件跳转，按单边方式处理
-      System.err.println(debugPrefix + "no conditional found, falling back");
+      if (DEBUG) System.err.println(debugPrefix + "no conditional found, falling back");
       for (EdgeInfo edge : blockEdges) {
         LabelNode dstLabel = findNearestLabel(offsetToLabel, edge.dstBlockPosition);
         insertEdgeProbeByBlock(classInternalName, insns, edge, edge.probeId, srcLabel, dstLabel);
@@ -1001,7 +1102,7 @@ public class HybridEdgeInstrumentor {
       int invertedOpcode = invertIfOpcode(conditionalJump.getOpcode());
       if (invertedOpcode < 0) {
         // 不能反转，回退
-        System.err.println(debugPrefix + "cannot invert opcode, falling back");
+        if (DEBUG) System.err.println(debugPrefix + "cannot invert opcode, falling back");
         for (EdgeInfo edge : blockEdges) {
           LabelNode dstLabel = findNearestLabel(offsetToLabel, edge.dstBlockPosition);
           insertEdgeProbeByBlock(classInternalName, insns, edge, edge.probeId, srcLabel, dstLabel);
@@ -1009,7 +1110,7 @@ public class HybridEdgeInstrumentor {
         return;
       }
 
-      System.err.println(debugPrefix + "taken=" + takenEdge.probeId + ", fallthru=" + fallthruEdge.probeId);
+      if (DEBUG) System.err.println(debugPrefix + "taken=" + takenEdge.probeId + ", fallthru=" + fallthruEdge.probeId);
 
       LabelNode Lskip = new LabelNode();
       LabelNode Ldest = conditionalJump.label;
@@ -1030,16 +1131,16 @@ public class HybridEdgeInstrumentor {
 
     } else if (takenEdge != null) {
       // 只有 taken edge
-      System.err.println(debugPrefix + "only taken=" + takenEdge.probeId);
+      if (DEBUG) System.err.println(debugPrefix + "only taken=" + takenEdge.probeId);
       instrumentConditionalTakenEdge(insns, conditionalJump, createProbeCode(classInternalName, takenEdge.probeId));
 
     } else if (fallthruEdge != null) {
       // 只有 fall-through edge
-      System.err.println(debugPrefix + "only fallthru=" + fallthruEdge.probeId);
+      if (DEBUG) System.err.println(debugPrefix + "only fallthru=" + fallthruEdge.probeId);
       insns.insert(conditionalJump, createProbeCode(classInternalName, fallthruEdge.probeId));
 
     } else {
-      System.err.println(debugPrefix + "NO-INSERT");
+      if (DEBUG) System.err.println(debugPrefix + "NO-INSERT");
     }
   }
 
@@ -1349,20 +1450,44 @@ public class HybridEdgeInstrumentor {
   }
 
   /**
-   * Create probe bytecode: $gzoltarData[probeId] = true
+   * Create probe bytecode: $gzoltarData[probeId] = true (or epoch value)
    * Uses optimal opcode based on index size:
    * - BIPUSH for 0-127
    * - SIPUSH for 128-32767
    * - LDC for 32768+ (fixes overflow issue with SIPUSH)
+   *
+   * Supports two modes based on Collector.isUseEpoch():
+   * - Epoch mode (useEpoch=true): int[] with IASTORE, stores currentEpoch value
+   * - Boolean mode (useEpoch=false): boolean[] with BASTORE, stores true (same as BASICBLOCK)
    */
+  /** Field descriptor for int[] used by epoch optimization */
+  private static final String INT_ARRAY_DESC = "[I";
+  /** Field descriptor for boolean[] used by boolean mode */
+  private static final String BOOL_ARRAY_DESC = "[Z";
+
+  /** Cache useEpoch flag at instrumentation time (must match Collector's setting) */
+  private static boolean useEpochMode = true;
+
+  /** Set useEpoch mode (called from Instrumenter before instrumentation starts) */
+  public static void setUseEpochMode(boolean useEpoch) {
+    useEpochMode = useEpoch;
+  }
+
+  /** Get current array descriptor based on mode */
+  private String getArrayDesc() {
+    return useEpochMode ? INT_ARRAY_DESC : BOOL_ARRAY_DESC;
+  }
+
   private InsnList createProbeCode(String classInternalName, int probeId) {
     InsnList code = new InsnList();
 
+    // Get the probe array (int[] for epoch mode, boolean[] for boolean mode)
     code.add(new FieldInsnNode(Opcodes.GETSTATIC,
         classInternalName,
         InstrumentationConstants.FIELD_NAME,
-        InstrumentationConstants.FIELD_DESC_BYTECODE));
+        getArrayDesc()));
 
+    // Push probe index
     // Use optimal opcode based on index size:
     // - BIPUSH for index 0-127 (2 bytes, fastest)
     // - SIPUSH for index 128-32767 (3 bytes)
@@ -1375,8 +1500,21 @@ public class HybridEdgeInstrumentor {
       // LDC for large probe IDs (avoids SIPUSH overflow)
       code.add(new LdcInsnNode(probeId));
     }
-    code.add(new InsnNode(Opcodes.ICONST_1));
-    code.add(new InsnNode(Opcodes.BASTORE));
+
+    if (useEpochMode) {
+      // Epoch mode: store currentEpoch value (5 instructions total)
+      // Get current epoch value: Collector.currentEpoch
+      code.add(new FieldInsnNode(Opcodes.GETSTATIC,
+          "com/gzoltar/core/runtime/Collector",
+          "currentEpoch",
+          "I"));
+      // Store epoch value: probes[probeId] = currentEpoch
+      code.add(new InsnNode(Opcodes.IASTORE));
+    } else {
+      // Boolean mode: store true (4 instructions total, same as BASICBLOCK)
+      code.add(new InsnNode(Opcodes.ICONST_1));
+      code.add(new InsnNode(Opcodes.BASTORE));
+    }
 
     return code;
   }
@@ -1458,11 +1596,11 @@ public class HybridEdgeInstrumentor {
                Opcodes.ACC_SYNTHETIC | Opcodes.ACC_TRANSIENT;
     }
 
-    // Create field: boolean[] $gzoltarData = null
+    // Create field: int[] or boolean[] $gzoltarData = null (based on mode)
     org.objectweb.asm.tree.FieldNode field = new org.objectweb.asm.tree.FieldNode(
         access,
         InstrumentationConstants.FIELD_NAME,
-        InstrumentationConstants.FIELD_DESC_BYTECODE,  // "[Z" (boolean array)
+        getArrayDesc(),  // "[I" for epoch, "[Z" for boolean mode
         null,  // signature
         null   // initial value (null)
     );
@@ -1478,11 +1616,14 @@ public class HybridEdgeInstrumentor {
       access = Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC;
     }
 
+    String arrayDesc = getArrayDesc();  // "[I" for epoch, "[Z" for boolean
+    String arrayInternalName = useEpochMode ? "[I" : "[Z";
+
     MethodNode initMethod = new MethodNode(access, InstrumentationConstants.INIT_METHOD_NAME, "()V", null, null);
     InsnList insns = new InsnList();
 
     insns.add(new FieldInsnNode(Opcodes.GETSTATIC, classInternalName,
-        InstrumentationConstants.FIELD_NAME, InstrumentationConstants.FIELD_DESC_BYTECODE));
+        InstrumentationConstants.FIELD_NAME, arrayDesc));
     LabelNode afterInit = new LabelNode();
     insns.add(new JumpInsnNode(Opcodes.IFNONNULL, afterInit));
 
@@ -1512,9 +1653,9 @@ public class HybridEdgeInstrumentor {
     insns.add(new VarInsnNode(Opcodes.ALOAD, 0));
     insns.add(new InsnNode(Opcodes.ICONST_0));
     insns.add(new InsnNode(Opcodes.AALOAD));
-    insns.add(new TypeInsnNode(Opcodes.CHECKCAST, "[Z"));
+    insns.add(new TypeInsnNode(Opcodes.CHECKCAST, arrayInternalName));
     insns.add(new FieldInsnNode(Opcodes.PUTSTATIC, classInternalName,
-        InstrumentationConstants.FIELD_NAME, InstrumentationConstants.FIELD_DESC_BYTECODE));
+        InstrumentationConstants.FIELD_NAME, arrayDesc));
 
     insns.add(afterInit);
     // No need to add FrameNode manually - COMPUTE_FRAMES will handle it
